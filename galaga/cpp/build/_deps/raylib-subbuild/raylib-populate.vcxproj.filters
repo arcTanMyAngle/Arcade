@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\88fbc8759770dd657023176580d4d876\raylib-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\ec10b450a33c3b32304b6dd1a8a44a56\raylib-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\ee0a4b5710edbc8b79a5c8da9f28bc48\raylib-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\bornt\Desktop\myWebby\galaga\cpp\build\_deps\raylib-subbuild\CMakeFiles\raylib-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{D61A7EE9-D377-3EC7-8851-A44BB4EA862E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\deps\clang_sys-112eff46665a4d22.d: C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/macros.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/common.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/dynamic.rs
+
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\deps\libclang_sys-112eff46665a4d22.rlib: C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/macros.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/common.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/dynamic.rs
+
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\deps\libclang_sys-112eff46665a4d22.rmeta: C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/macros.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/common.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/dynamic.rs
+
+C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs:
+C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs:
+C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs:
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/macros.rs:
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/common.rs:
+C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\clang-sys-0e17cabb34c1a722\out/dynamic.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\bornt\\Desktop\\myWebby\\galaga\\rust\\target\\debug\\build\\clang-sys-0e17cabb34c1a722\\out

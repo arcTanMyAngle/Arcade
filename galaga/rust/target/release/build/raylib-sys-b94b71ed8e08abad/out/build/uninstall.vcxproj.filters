@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\rust\target\release\build\raylib-sys-b94b71ed8e08abad\out\build\CMakeFiles\66824e0f25576594b7c19720592f70e8\uninstall.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\raylib-sys-5.5.1\raylib\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\bornt\Desktop\myWebby\galaga\rust\target\release\build\raylib-sys-b94b71ed8e08abad\out\build\CMakeFiles\uninstall" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{9A41780E-1F0A-3FDB-B234-AAAB47745931}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

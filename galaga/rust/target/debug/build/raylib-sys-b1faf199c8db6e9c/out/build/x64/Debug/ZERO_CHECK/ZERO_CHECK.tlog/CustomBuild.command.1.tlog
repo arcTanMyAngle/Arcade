@@ -1,0 +1,10 @@
+^C:\USERS\BORNT\DESKTOP\MYWEBBY\GALAGA\RUST\TARGET\DEBUG\BUILD\RAYLIB-SYS-B1FAF199C8DB6E9C\OUT\BUILD\CMAKEFILES\6D44985AFA3A88E22ED8A34EF67FC300\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib -BC:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build/raylib.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

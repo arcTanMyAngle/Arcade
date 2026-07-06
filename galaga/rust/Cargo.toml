@@ -1,0 +1,20 @@
+[package]
+name = "galaga_rust"
+version = "0.1.0"
+edition = "2021"
+description = "Faithful Galaga clone (Rust / raylib) — companion to the C++ build for a perf comparison."
+
+[dependencies]
+raylib = "5.5"
+
+# Aggressive release profile to match the C++ /O2 build for a fair comparison.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Empty [workspace] table => this crate is its own workspace root and is NOT
+# pulled into the parent `wii_kart` package above it. Its target/ is separate.
+[workspace]

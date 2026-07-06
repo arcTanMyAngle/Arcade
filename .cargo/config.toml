@@ -1,0 +1,5 @@
+# Compile for THIS machine's CPU (Intel Core Ultra 7 155H / Meteor Lake).
+# Unlocks AVX2 + the wider vector paths glam/rayon benefit from.
+# Remove this file if you ever build the binary for distribution to other CPUs.
+[build]
+rustflags = ["-C", "target-cpu=native"]

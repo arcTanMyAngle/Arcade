@@ -1,0 +1,37 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeCInformation.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeCXXInformation.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeCommonLanguageInclude.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeDependentOption.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeGenericSystem.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeInitializeConfigs.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeLanguageInformation.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeRCInformation.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeSystemSpecificInformation.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CMakeSystemSpecificInitialize.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CheckCCompilerFlag.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CheckCSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Compiler/CMakeCommonCompilerMacros.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Compiler/MSVC-C.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Compiler/MSVC-CXX.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Compiler/MSVC.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Internal/CheckCompilerFlag.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Internal/CheckFlagCommonConfig.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Internal/CheckSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Platform/Windows-MSVC-C.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Platform/Windows-MSVC-CXX.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Platform/Windows-MSVC.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Platform/Windows.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/Platform/WindowsPaths.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/CMakeLists.txt
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/CMakeOptions.txt
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/AddIfFlagCompiles.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/CompilerFlags.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/EnumOption.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/ParseConfigHeader.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/Uninstall.cmake
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build/CMakeFiles/3.26.0-rc6/CMakeCCompiler.cmake
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build/CMakeFiles/3.26.0-rc6/CMakeCXXCompiler.cmake
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build/CMakeFiles/3.26.0-rc6/CMakeRCCompiler.cmake
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/build/CMakeFiles/3.26.0-rc6/CMakeSystem.cmake

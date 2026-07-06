@@ -1,0 +1,7 @@
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/lib/raylib.lib
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/include/raylib.h
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/include/rlgl.h
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/include/raymath.h
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/lib/pkgconfig/raylib.pc
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/lib/cmake/raylib/raylib-config-version.cmake
+C:/Users/bornt/Desktop/myWebby/galaga/rust/target/debug/build/raylib-sys-b1faf199c8db6e9c/out/lib/cmake/raylib/raylib-config.cmake

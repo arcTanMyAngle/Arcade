@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DK64 — Jungle Japes Slice</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Trebuchet MS',Arial,sans-serif;cursor:grab}
+  body.drag{cursor:grabbing}
+  #ui{position:fixed;inset:0;pointer-events:none;z-index:10;color:#fff;text-shadow:2px 2px 0 #000,-1px -1px 0 #000}
+  #top{position:absolute;top:14px;left:18px;display:flex;flex-direction:column;gap:8px}
+  .badge{display:flex;align-items:center;gap:8px;font-size:26px;font-weight:bold}
+  .ban{width:26px;height:26px;display:inline-block;filter:drop-shadow(1px 1px 0 #000)}
+  #hearts{display:flex;gap:5px}
+  .heart{width:26px;height:26px;background:radial-gradient(circle at 35% 30%,#ff8c4a,#d63a1e);border-radius:50% 50% 50% 50%/60% 60% 40% 40%;border:2px solid #5a1500;transition:.2s}
+  .heart.dead{background:#333;opacity:.4}
+  #hint{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);font-size:22px;font-weight:bold;color:#ffe14d;opacity:0;transition:.25s;text-align:center}
+  #help{position:absolute;bottom:12px;right:16px;font-size:13px;line-height:1.5;text-align:right;opacity:.85;font-weight:bold}
+  #title{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+  #title h1{font-size:54px;color:#ffcf33;letter-spacing:2px;-webkit-text-stroke:2px #5a3700}
+  #title p{font-size:20px;margin-top:10px;color:#fff}
+  #title small{display:block;margin-top:18px;font-size:16px;color:#bdf}
+  #banner{position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);font-size:60px;font-weight:bold;color:#ffe14d;-webkit-text-stroke:2px #6a4a00;opacity:0;transition:.4s;text-align:center}
+  .fade{animation:f 2s forwards}@keyframes f{0%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-90%) scale(1.4)}}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="top">
+    <div class="badge"><svg class="ban" viewBox="0 0 24 24"><path d="M4 14c1 6 14 8 17-1c-3 5-12 4-14-1z" fill="#ffd400" stroke="#7a5a00" stroke-width="1.2"/><path d="M19 13l2-2" stroke="#5a3a00" stroke-width="2"/></svg><span id="bcount">0</span><span style="font-size:18px;opacity:.8">/ <span id="btotal">0</span></span></div>
+    <div id="hearts"></div>
+  </div>
+  <div id="hint"></div>
+  <div id="banner"></div>
+  <div id="help">WASD move &nbsp;·&nbsp; SPACE jump &nbsp;·&nbsp; SHIFT ground-slam<br>Mouse-drag / Arrows orbit &nbsp;·&nbsp; Wheel zoom &nbsp;·&nbsp; E enter cannon</div>
+  <div id="title"><h1>DONKEY KONG 64</h1><p>Jungle Japes — Vertical Slice</p><small>Click to begin · collect every banana · reach the golden banana</small></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE, S=Math, R=(a,b)=>a+S.random()*(b-a);
+const scene=new T.Scene();
+scene.background=new T.Color(0x8fd3ff);
+scene.fog=new T.Fog(0x8fd3ff,55,140);
+const camera=new T.PerspectiveCamera(60,innerWidth/innerHeight,0.1,500);
+const renderer=new T.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// ---------- lights ----------
+scene.add(new T.HemisphereLight(0xbfe9ff,0x4a6b2a,0.85));
+const sun=new T.DirectionalLight(0xfff3d6,1.05);
+sun.position.set(40,70,30);sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+const sc=sun.shadow.camera;sc.left=-70;sc.right=70;sc.top=70;sc.bottom=-70;sc.near=1;sc.far=200;
+sun.shadow.bias=-0.0004;scene.add(sun);
+
+// ---------- primitive helpers ----------
+const mat=(c,o={})=>new T.MeshStandardMaterial({color:c,flatShading:o.flat!==false,roughness:o.r??0.9,metalness:o.m??0,transparent:o.t||false,opacity:o.o??1,emissive:o.e||0x000000,emissiveIntensity:o.ei||1});
+function box(w,h,d,c,o){const m=new T.Mesh(new T.BoxGeometry(w,h,d),c.isMaterial?c:mat(c,o));m.castShadow=m.receiveShadow=true;return m;}
+function cyl(rt,rb,h,c,seg=10,o){const m=new T.Mesh(new T.CylinderGeometry(rt,rb,h,seg),c.isMaterial?c:mat(c,o));m.castShadow=m.receiveShadow=true;return m;}
+function sph(r,c,seg=10,o){const m=new T.Mesh(new T.SphereGeometry(r,seg,seg-2),c.isMaterial?c:mat(c,o));m.castShadow=m.receiveShadow=true;return m;}
+function cone(r,h,c,seg=8){const m=new T.Mesh(new T.ConeGeometry(r,h,seg),c.isMaterial?c:mat(c));m.castShadow=m.receiveShadow=true;return m;}
+
+// ---------- colliders ----------
+const platforms=[]; // {x,z,top,hw,hd}
+function addPlat(mesh,x,top,z,hw,hd){platforms.push({x,z,top,hw,hd});return mesh;}
+
+// ---------- terrain (Jungle Japes) ----------
+const world=new T.Group();scene.add(world);
+// main island
+const ground=box(90,4,90,0x3f9a3a,{flat:false,r:1});ground.position.set(0,-2,0);world.add(ground);
+addPlat(ground,0,0,0,45,45);
+// dirt path
+const path=box(8,0.15,70,0x9a7a45,{flat:false});path.position.set(0,0.05,0);world.add(path);
+// water moat ring
+const water=new T.Mesh(new T.PlaneGeometry(400,400),mat(0x2f7fc4,{flat:false,t:true,o:0.8,r:0.2,m:0.1}));
+water.rotation.x=-S.PI/2;water.position.y=-2.6;world.add(water);
+
+// helper: raised block platform
+function block(x,y,z,w,h,d,c){const m=box(w,h,d,c);m.position.set(x,y-h/2+ (h/2),z);m.position.y=y;world.add(m);addPlat(m,x,y+h/2,z,w/2,d/2);return m;}
+// stepped hill (right side)
+const hillC=0x5fae45;
+block(22,1,-6,12,2,12,hillC);
+block(24,2.6,-10,9,2,9,0x57a23e);
+block(26,4.2,-13,6,2,6,0x4f963a);
+// upper plateau with structure
+block(28,6,-16,8,2,8,0x4f963a);
+// left jungle ledge
+block(-20,2,8,10,2,12,hillC);
+block(-22,4,12,7,2,7,0x57a23e);
+// stepping stones across (toward cannon)
+block(-8,1.2,22,5,1.6,5,0x8a6a3a);
+block(2,2.4,28,5,1.6,5,0x8a6a3a);
+block(12,3.6,32,5,1.6,5,0x8a6a3a);
+// FLOATING far platform (cannon target) — the prize
+const goalPlat=block(40,12,40,11,2,11,0xb98a4a);
+
+// trees
+function tree(x,z,s=1){const g=new T.Group();
+  const tr=cyl(0.5*s,0.7*s,5*s,0x6d4a2a,7);tr.position.y=2.5*s;g.add(tr);
+  for(let i=0;i<3;i++){const l=sph((2.2-i*0.4)*s,i?0x2f8a35:0x37a13e,9);l.position.y=(4.6+i*1.3)*s;l.scale.y=0.8;g.add(l);}
+  g.position.set(x,0,z);g.traverse(o=>{o.castShadow=true});world.add(g);return g;}
+tree(-15,-15);tree(15,12,1.2);tree(-25,-20,0.9);tree(30,18,1.1);tree(-30,15);tree(18,-25,1.15);tree(-12,25,0.85);tree(35,-8);
+// palm-ish near goal
+const pt=tree(40,40,0.6);pt.position.y=13;
+
+// rocks / mushrooms (DK barrel vibe scenery)
+function rock(x,z,r){const m=sph(r,0x7c7c84,7);m.scale.y=0.7;m.position.set(x,r*0.6,z);world.add(m);return m;}
+rock(-6,-22,1.6);rock(8,-18,1.1);rock(-18,3,1.3);rock(20,25,1.5);
+function mushroom(x,z){const g=new T.Group();const st=cyl(0.4,0.55,2,0xf2e9d0,8);st.position.y=1;g.add(st);
+  const cap=sph(1.6,0xd83a2a,10);cap.scale.y=0.55;cap.position.y=2.1;g.add(cap);
+  for(let i=0;i<6;i++){const s=sph(0.28,0xffffff,6);const a=i/6*6.28;s.position.set(S.cos(a)*1.05,2.25,S.sin(a)*1.05);g.add(s);}
+  g.position.set(x,0,z);g.traverse(o=>o.castShadow=true);world.add(g);}
+mushroom(10,8);mushroom(-10,-5);mushroom(5,-30);
+
+// vines (decorative)
+for(let i=0;i<5;i++){const v=cyl(0.08,0.08,R(4,7),0x3c7a2a,5);v.position.set(R(-30,30),R(3,6),R(-30,30));world.add(v);}
+
+// ---------- Donkey Kong ----------
+function buildDK(){
+  const g=new T.Group();
+  const fur=0x7a4a1e, dfur=0x5e3815, skin=0xc89a5e;
+  // torso
+  const torso=box(2.4,2.2,1.7,fur);torso.position.y=2.7;torso.geometry.translate(0,0,0);g.add(torso);
+  const chest=box(2.0,1.4,0.4,0xb98a55);chest.position.set(0,2.7,0.85);g.add(chest);
+  // tie
+  const tie=box(0.5,1.2,0.12,0xd6332a);tie.position.set(0,2.5,1.06);g.add(tie);
+  const knot=box(0.4,0.35,0.16,0xb02018);knot.position.set(0,3.15,1.06);g.add(tie.knot=knot);g.add(knot);
+  // hips
+  const hips=box(1.9,0.9,1.5,dfur);hips.position.y=1.5;g.add(hips);
+  // head
+  const head=new T.Group();head.position.set(0,4.25,0.1);
+  const skull=sph(1.05,fur,12);skull.scale.set(1,0.95,1);head.add(skull);
+  const muzzle=sph(0.7,skin,10);muzzle.scale.set(1.1,0.7,0.9);muzzle.position.set(0,-0.35,0.7);head.add(muzzle);
+  const nl=sph(0.12,0x2a1a0e,6);nl.position.set(-0.22,-0.2,1.18);head.add(nl);
+  const nr=nl.clone();nr.position.x=0.22;head.add(nr);
+  const brow=box(1.3,0.22,0.3,dfur);brow.position.set(0,0.35,0.85);head.add(brow);
+  for(const sx of[-1,1]){const eye=sph(0.2,0xffffff,7);eye.position.set(0.35*sx,0.18,0.82);head.add(eye);
+    const pup=sph(0.09,0x201008,6);pup.position.set(0.35*sx,0.16,0.99);head.add(pup);
+    const ear=sph(0.32,fur,8);ear.position.set(1.0*sx,0.1,0);head.add(ear);}
+  // hair tuft
+  const tuft=cone(0.45,0.7,dfur,6);tuft.position.set(0,0.95,-0.1);head.add(tuft);
+  g.add(head);
+  // arms
+  function arm(side){const a=new T.Group();a.position.set(1.3*side,3.5,0);
+    const up=cyl(0.42,0.42,1.3,fur,8);up.position.y=-0.6;a.add(up);
+    const fore=cyl(0.46,0.4,1.5,fur,8);fore.position.y=-1.9;a.add(fore);
+    const fist=sph(0.62,skin,9);fist.position.y=-2.8;a.add(fist);
+    g.add(a);return a;}
+  const larm=arm(-1),rarm=arm(1);
+  // legs
+  function leg(side){const l=new T.Group();l.position.set(0.6*side,1.4,0);
+    const th=cyl(0.5,0.45,1.0,dfur,8);th.position.y=-0.5;l.add(th);
+    const foot=box(0.95,0.5,1.5,skin);foot.position.set(0,-1.1,0.35);l.add(foot);
+    g.add(l);return l;}
+  const lleg=leg(-1),rleg=leg(1);
+  g.traverse(o=>{o.castShadow=true});
+  g.scale.setScalar(0.42);
+  g.userData={head,larm,rarm,lleg,rleg};
+  return g;
+}
+const dk=buildDK();scene.add(dk);
+
+// ---------- bananas ----------
+const bananas=[];
+function makeBanana(x,y,z,golden=false){
+  const g=new T.Group();
+  const c=golden?0xffdf3a:0xffd400;
+  const b=new T.Mesh(new T.TorusGeometry(golden?0.9:0.55,golden?0.32:0.2,8,12,S.PI*1.25),mat(c,{r:0.35,m:0.4,e:golden?0x6a5200:0x3a2e00,ei:0.6}));
+  b.castShadow=true;g.add(b);
+  if(golden){const glow=sph(1.4,0xffe14d,10,{t:true,o:0.18,e:0xffcf33});g.add(glow);g.userData.glow=glow;}
+  g.position.set(x,y,z);g.userData.base=y;g.userData.golden=golden;g.userData.alive=true;
+  scene.add(g);bananas.push(g);return g;
+}
+// banana trail along path
+for(let i=0;i<8;i++)makeBanana(0,1.4,-26+i*7,false);
+makeBanana(22,2.6,-6);makeBanana(24,4.2,-10);makeBanana(28,7.6,-16);
+makeBanana(-20,3.6,8);makeBanana(-22,5.6,12);
+makeBanana(-8,2.8,22);makeBanana(2,4,28);makeBanana(12,5.2,32);
+makeBanana(40,14,40,true); // golden on goal platform
+const totalBananas=bananas.length;
+document.getElementById('btotal').textContent=totalBananas;
+
+// ---------- enemies (Kremlings) ----------
+const enemies=[];
+function makeKremling(x,z,ax,bx){
+  const g=new T.Group();
+  const body=sph(0.9,0x4f9d3a,9);body.scale.set(1,1.1,1.1);body.position.y=1;g.add(body);
+  const belly=sph(0.6,0xcfe89a,8);belly.scale.set(0.9,1.1,0.6);belly.position.set(0,0.9,0.7);g.add(belly);
+  const head=sph(0.6,0x4f9d3a,9);head.position.set(0,1.9,0.2);g.add(head);
+  const snout=box(0.7,0.4,0.9,0x57a83f);snout.position.set(0,1.75,0.8);g.add(snout);
+  for(const sx of[-1,1]){const e=sph(0.18,0xffe14d,6);e.position.set(0.28*sx,2.15,0.55);g.add(e);
+    const p=sph(0.08,0x000,5);p.position.set(0.28*sx,2.15,0.7);g.add(p);
+    const leg=cyl(0.22,0.18,0.7,0x3c7a2a,6);leg.position.set(0.4*sx,0.4,0);g.add(leg);}
+  // teeth
+  for(let i=0;i<4;i++){const t=cone(0.07,0.18,0xffffff,4);t.rotation.x=S.PI;t.position.set(-0.25+i*0.16,1.6,1.2);g.add(t);}
+  g.traverse(o=>o.castShadow=true);
+  g.position.set(x,0,z);
+  g.userData={ax,bx,dir:1,alive:true,top:2.4,base:z};
+  scene.add(g);enemies.push(g);return g;
+}
+makeKremling(-6,-12,-12,2);
+makeKremling(14,5,6,22);
+makeKremling(-6,18,-12,4);
+
+// ---------- barrel cannon ----------
+const cannon=new T.Group();
+const barrel=cyl(1.3,1.3,3.4,0x8a5a2c,16);barrel.rotation.z=0;
+const cg=new T.Group();
+const body2=cyl(1.3,1.3,3.2,0x8a5a2c,16);cg.add(body2);
+for(const yy of[-1.2,0,1.2]){const band=cyl(1.38,1.38,0.3,0x3a2a18,16);band.position.y=yy;cg.add(band);}
+const rim=cyl(1.45,1.3,0.5,0x6a3f1c,16);rim.position.y=1.7;cg.add(rim);
+const hole=cyl(1.05,1.05,0.4,0x140d06,16);hole.position.y=1.85;cg.add(hole);
+// DK star on barrel
+const star=new T.Mesh(new T.CircleGeometry(0.7,5),mat(0xffcf33,{e:0x6a5200}));star.position.set(0,0,1.32);cg.add(star);
+cg.traverse(o=>o.castShadow=true);
+cannon.add(cg);
+cannon.position.set(12,4.6,32); // sits on a stepping stone
+const goalPt=new T.Vector3(40,14,40);
+// aim barrel toward goal
+const aim=goalPt.clone().sub(cannon.position);
+cannon.rotation.y=S.atan2(aim.x,aim.z);
+cg.rotation.x=-S.atan2(S.hypot(aim.x,aim.z),aim.y)+S.PI; // tilt up
+scene.add(cannon);
+
+// shockwave pool
+const shock=new T.Mesh(new T.RingGeometry(0.5,1.2,24),mat(0xffffff,{t:true,o:0.7,e:0xffe14d}));
+shock.rotation.x=-S.PI/2;shock.visible=false;scene.add(shock);let shockT=0;
+
+// ---------- player state / physics ----------
+const P={
+  pos:new T.Vector3(0,0.2,-24), vel:new T.Vector3(),
+  onGround:false, facing:0, walkPhase:0, slamming:false,
+  inCannon:false, cannonTimer:0, hp:4, iframes:0, squash:1, started:false
+};
+const G=-0.034, JUMP=0.62, ACCEL=0.052, FRICTION=0.80, MAXSPD=0.30, SLAM=-0.9;
+
+function groundAt(x,z,yref){
+  if(yref===undefined)yref=P.pos.y;
+  let best=-Infinity;
+  for(const p of platforms){
+    if(x>=p.x-p.hw&&x<=p.x+p.hw&&z>=p.z-p.hd&&z<=p.z+p.hd){
+      if(yref>=p.top-0.45 && p.top>best) best=p.top;
+    }
+  }
+  return best;
+}
+
+// ---------- input ----------
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if([ 'Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(e.code==='KeyE')tryCannon();});
+addEventListener('keyup',e=>keys[e.code]=false);
+let camYaw=S.PI, camPitch=0.5, camDist=14, dragging=false,lx=0,ly=0;
+renderer.domElement.addEventListener('mousedown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;document.body.classList.add('drag');if(!P.started)startGame();});
+addEventListener('mouseup',()=>{dragging=false;document.body.classList.remove('drag');});
+addEventListener('mousemove',e=>{if(dragging){camYaw-=(e.clientX-lx)*0.006;camPitch=S.max(0.12,S.min(1.35,camPitch-(e.clientY-ly)*0.006));lx=e.clientX;ly=e.clientY;}});
+addEventListener('wheel',e=>{camDist=S.max(7,S.min(24,camDist+e.deltaY*0.012));},{passive:true});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+function startGame(){if(P.started)return;P.started=true;document.getElementById('title').style.display='none';}
+addEventListener('click',startGame);
+
+// ---------- hearts UI ----------
+const heartsEl=document.getElementById('hearts');
+function drawHearts(){heartsEl.innerHTML='';for(let i=0;i<4;i++){const h=document.createElement('div');h.className='heart'+(i<P.hp?'':' dead');heartsEl.appendChild(h);}}
+drawHearts();
+const hintEl=document.getElementById('hint');
+function hint(t){hintEl.textContent=t;hintEl.style.opacity=t?1:0;}
+const bannerEl=document.getElementById('banner');
+function banner(t){bannerEl.textContent=t;bannerEl.classList.remove('fade');void bannerEl.offsetWidth;bannerEl.classList.add('fade');}
+
+function tryCannon(){
+  if(P.inCannon)return;
+  if(dk.position.distanceTo(cannon.position)<3.2 && P.onGround){
+    P.inCannon=true;P.cannonTimer=0;dk.visible=false;P.vel.set(0,0,0);
+    P.pos.copy(cannon.position);P.pos.y+=0.5;
+    hint('');
+  }
+}
+function fireCannon(){
+  P.inCannon=false;dk.visible=true;
+  const N=58;
+  const start=cannon.position.clone();
+  const dx=goalPt.x-start.x, dz=goalPt.z-start.z, dy=goalPt.y-start.y;
+  P.pos.copy(start);
+  P.vel.x=dx/N; P.vel.z=dz/N;
+  P.vel.y=(dy - 0.5*G*N*N)/N;
+  P.onGround=false;P.facing=S.atan2(dx,dz);
+  banner('🚀 BLAST OFF!');
+}
+
+function hurt(){
+  if(P.iframes>0)return;P.hp--;P.iframes=70;drawHearts();
+  P.vel.y=0.35;banner('OUCH!');
+  if(P.hp<=0)respawn(true);
+}
+function respawn(full){
+  if(full){P.hp=4;drawHearts();banner('TRY AGAIN');}
+  P.pos.set(0,0.2,-24);P.vel.set(0,0,0);P.inCannon=false;dk.visible=true;P.iframes=60;
+}
+
+let won=false;
+function checkWin(){
+  if(!won && bananas.every(b=>!b.userData.alive)){won=true;banner('🏆 100% — DK WINS!');}
+}
+
+// ---------- main loop ----------
+const clock=new T.Clock();
+const camTarget=new T.Vector3();
+function animate(){
+  requestAnimationFrame(animate);
+  let dt=clock.getDelta(); const t=S.min(dt,0.05)*60;
+
+  // camera arrow orbit
+  if(keys.ArrowLeft)camYaw+=0.04*t; if(keys.ArrowRight)camYaw-=0.04*t;
+  if(keys.ArrowUp)camPitch=S.min(1.35,camPitch+0.03*t); if(keys.ArrowDown)camPitch=S.max(0.12,camPitch-0.03*t);
+
+  if(P.started && !P.inCannon){
+    // movement dir relative to camera
+    const fx=-S.sin(camYaw), fz=-S.cos(camYaw), rx=-fz, rz=fx;
+    let mx=0,mz=0;
+    if(keys.KeyW)
+      {mx+=fx;mz+=fz;} if(keys.KeyS){mx-=fx;mz-=fz;}
+    if(keys.KeyD){mx+=rx;mz+=rz;} if(keys.KeyA){mx-=rx;mz-=rz;}
+    const ml=S.hypot(mx,mz);
+    if(ml>0){mx/=ml;mz/=ml;P.vel.x+=mx*ACCEL*t;P.vel.z+=mz*ACCEL*t;P.facing=S.atan2(mx,mz);}
+    // friction (ground stronger than air)
+    const fr=S.pow(P.onGround?FRICTION:0.94,t);P.vel.x*=fr;P.vel.z*=fr;
+    // clamp horizontal
+    const hs=S.hypot(P.vel.x,P.vel.z);if(hs>MAXSPD){P.vel.x*=MAXSPD/hs;P.vel.z*=MAXSPD/hs;}
+    // jump
+    if(keys.Space&&P.onGround&&!P.slamming){P.vel.y=JUMP;P.onGround=false;}
+    // ground slam
+    if((keys.ShiftLeft||keys.ShiftRight)&&!P.onGround&&!P.slamming&&P.vel.y<0.4){
+      P.slamming=true;P.vel.y=SLAM;P.vel.x*=0.2;P.vel.z*=0.2;
+    }
+    // gravity + integrate
+    P.vel.y+=G*t;
+    P.pos.x+=P.vel.x*t;P.pos.y+=P.vel.y*t;P.pos.z+=P.vel.z*t;
+    // ground collision
+    const gy=groundAt(P.pos.x,P.pos.z);
+    if(P.pos.y<=gy){
+      P.pos.y=gy;
+      if(!P.onGround){
+        if(P.slamming){ // slam landing shockwave
+          shock.position.set(P.pos.x,gy+0.1,P.pos.z);shock.visible=true;shockT=1;P.squash=0.6;
+          for(const en of enemies)if(en.userData.alive&&S.hypot(en.position.x-P.pos.x,en.position.z-P.pos.z)<5)killEnemy(en);
+        } else P.squash=0.82;
+      }
+      P.vel.y=0;P.onGround=true;P.slamming=false;
+    } else P.onGround=false;
+    // void / water -> respawn
+    if(P.pos.y<-8)respawn(false);
+  }
+
+  // cannon mode
+  if(P.inCannon){
+    P.cannonTimer+=t;
+    hint('Press SPACE / E to FIRE!');
+    if(keys.Space||P.cannonTimer>140)fireCannon();
+  } else if(dk.position.distanceTo(cannon.position)<4 && P.onGround){
+    hint('Press E to enter the barrel cannon');
+  } else hint('');
+
+  // place dk
+  dk.position.set(P.pos.x,P.pos.y,P.pos.z);
+  dk.rotation.y=P.facing;
+  P.squash+=(1-P.squash)*0.15*t; dk.scale.set(0.42*(2-P.squash),0.42*P.squash,0.42*(2-P.squash));
+  // iframe blink
+  if(P.iframes>0){P.iframes-=t;dk.visible=(S.floor(P.iframes/4)%2===0)&&!P.inCannon;} else if(!P.inCannon)dk.visible=true;
+
+  // dk animation
+  const U=dk.userData, spd=S.hypot(P.vel.x,P.vel.z);
+  if(P.onGround){
+    P.walkPhase+=spd*1.6*t;
+    const sw=S.sin(P.walkPhase)*S.min(spd/MAXSPD,1)*0.9;
+    U.lleg.rotation.x=sw;U.rleg.rotation.x=-sw;
+    U.larm.rotation.x=-sw*0.7;U.rarm.rotation.x=sw*0.7;
+    U.head.rotation.z=S.sin(P.walkPhase)*0.05;
+  } else {
+    const a=P.slamming?-2.6:-1.8;
+    U.larm.rotation.x+=(a-U.larm.rotation.x)*0.3;U.rarm.rotation.x+=(a-U.rarm.rotation.x)*0.3;
+    U.lleg.rotation.x+=(0.5-U.lleg.rotation.x)*0.3;U.rleg.rotation.x+=(0.5-U.rleg.rotation.x)*0.3;
+  }
+
+  // bananas spin/bob/collect
+  for(const b of bananas){if(!b.userData.alive)continue;
+    b.rotation.y+=0.05*t;b.position.y=b.userData.base+S.sin(performance.now()*0.003+b.position.x)*0.18;
+    if(b.userData.glow){b.userData.glow.rotation.y-=0.02*t;b.userData.glow.scale.setScalar(1+S.sin(performance.now()*0.004)*0.08);}
+    if(P.started&&dk.position.distanceTo(b.position)<(b.userData.golden?2.0:1.3)){
+      b.userData.alive=false;b.visible=false;
+      const got=bananas.filter(x=>!x.userData.alive).length;
+      document.getElementById('bcount').textContent=got;
+      if(b.userData.golden)banner('★ GOLDEN BANANA! ★');
+      checkWin();
+    }
+  }
+
+  // enemies
+  for(const en of enemies){if(!en.userData.alive)continue;const u=en.userData;
+    en.position.x+=0.035*u.dir*t;
+    if(en.position.x>u.bx)u.dir=-1;if(en.position.x<u.ax)u.dir=1;
+    en.rotation.y=u.dir>0?S.PI/2:-S.PI/2;
+    en.position.y=groundAt(en.position.x,en.position.z,en.position.y+2); if(en.position.y<-5)en.position.y=0;
+    en.position.y+=S.abs(S.sin(performance.now()*0.006+en.position.x))*0.1;
+    // collision
+    if(P.started&&!P.inCannon){
+      const dxz=S.hypot(dk.position.x-en.position.x,dk.position.z-en.position.z);
+      if(dxz<1.6){
+        if(P.vel.y<0 && P.pos.y>en.position.y+1.4){killEnemy(en);P.vel.y=JUMP*0.7;}
+        else hurt();
+      }
+    }
+  }
+
+  // shockwave
+  if(shock.visible){shockT-=0.03*t;const s=1+(1-shockT)*8;shock.scale.set(s,s,s);shock.material.opacity=shockT*0.7;if(shockT<=0)shock.visible=false;}
+  // cannon idle spin
+  cannon.children[0].rotation.y+=0.005*t;
+
+  // camera follow
+  camTarget.set(P.pos.x,P.pos.y+1.8,P.pos.z);
+  const ox=S.sin(camYaw)*S.cos(camPitch)*camDist, oy=S.sin(camPitch)*camDist, oz=S.cos(camYaw)*S.cos(camPitch)*camDist;
+  const desired=new T.Vector3(camTarget.x+ox,camTarget.y+oy,camTarget.z+oz);
+  camera.position.lerp(desired,1-S.pow(0.001,dt));
+  camera.lookAt(camTarget);
+
+  renderer.render(scene,camera);
+}
+function killEnemy(en){en.userData.alive=false;
+  // pop animation: shrink + drop banana
+  const x=en.position.x,z=en.position.z;
+  let s=1;const id=setInterval(()=>{s-=0.12;en.scale.setScalar(S.max(0,s));if(s<=0){clearInterval(id);en.visible=false;}},16);
+  banner('SMASHED!');
+}
+animate();
+</script>
+</body>
+</html>

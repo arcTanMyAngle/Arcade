@@ -1,0 +1,37 @@
+[package]
+name = "wii_kart"
+version = "0.1.0"
+edition = "2021"
+description = "A procedurally-generated, third-person 3D arcade kart racer (Mario Kart Wii feel)."
+
+[dependencies]
+# Lightweight 3D: window, input, Vulkan/DX12-friendly renderer, and glam math.
+# Needs Rust 1.82+ (const-fn float math); this repo builds on the 1.96 toolchain.
+# The "audio" feature is OFF by default (macroquad's `default = []`); M7 enables it
+# to pull in quad-snd (WAV decode via audrey/hound + the platform mixer). Without
+# it every `macroquad::audio::*` call is a silent no-op stub.
+macroquad = { version = "0.4", features = ["audio"] }
+# Data-parallel AI pathfinding and particle integration across all 16 threads.
+rayon = "1.10"
+
+# ----------------------------------------------------------------------------
+# Aggressive release profile — built for a single target machine (Arc iGPU).
+# Pair with .cargo/config.toml (target-cpu=native) for AVX2/AVX-512 on Meteor Lake.
+# ----------------------------------------------------------------------------
+[profile.release]
+opt-level = 3          # full optimization
+lto = "fat"            # whole-program link-time optimization
+codegen-units = 1      # maximize cross-function inlining (slower build, faster run)
+panic = "abort"        # no unwinding tables -> smaller, faster, no landing pads
+strip = true           # strip symbols from the final binary
+debug = false
+overflow-checks = false
+incremental = false
+
+# Keep dependencies optimized even in dev so the editor/runtime stays smooth,
+# while our own crate compiles fast for quick iteration.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

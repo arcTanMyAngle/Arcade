@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNCANNY CARNIVAL</title>
+  <style>
+    :root { --fg:#e8fff0; --neon:#39ff88; --neon2:#ff2fb0; --bad:#ff4d4d; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html,body { height:100%; background:#050607; color:var(--fg);
+      font-family:"Courier New",monospace; overflow:hidden; cursor:crosshair; }
+    #app { position:fixed; inset:0; }
+    canvas { display:block; }
+
+    /* --- overlays --- */
+    .overlay { position:fixed; inset:0; z-index:10; }
+    #menu { display:flex; flex-direction:column; align-items:center; justify-content:center;
+      gap:22px; background:radial-gradient(ellipse at center,#0a1410 0%,#050607 70%); }
+    #menu h1 { font-size:clamp(28px,6vw,64px); letter-spacing:.35em; color:var(--neon);
+      text-shadow:0 0 14px var(--neon),0 0 40px #013; filter:contrast(1.2); }
+    #menu .sub { color:var(--neon2); letter-spacing:.3em; font-size:12px; opacity:.85; }
+    .games { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:12px;
+      max-width:760px; }
+    .card { border:1px solid #14503a; background:#08110d; padding:14px 12px; text-align:center;
+      letter-spacing:.12em; font-size:13px; transition:.12s; }
+    .card.on { cursor:pointer; }
+    .card.on:hover { border-color:var(--neon); color:var(--neon); box-shadow:0 0 12px #093; }
+    .card.off { color:#2a4d3d; border-color:#0c241b; cursor:not-allowed; }
+    .card .tag { display:block; font-size:9px; margin-top:6px; color:#2a6; }
+    .card.off .tag { color:#2a4d3d; }
+    .tiers { display:flex; gap:8px; align-items:center; letter-spacing:.15em; font-size:13px; }
+    .tiers button { width:34px; height:34px; background:#08110d; color:var(--fg);
+      border:1px solid #14503a; font-family:inherit; cursor:pointer; }
+    .tiers button.sel { background:var(--neon); color:#021; border-color:var(--neon); }
+    .tiers .t5 { color:var(--bad); border-color:#5a1414; }
+    .tiers button.sel.t5 { background:var(--bad); color:#100; }
+    .hint { font-size:11px; color:#3a6a55; letter-spacing:.12em; }
+
+    /* --- HUD --- */
+    #hud { pointer-events:none; display:none; }
+    #hud .tl { position:absolute; top:14px; left:16px; font-size:14px; letter-spacing:.15em;
+      text-shadow:0 0 8px #041; }
+    #hud .tr { position:absolute; top:14px; right:16px; text-align:right; font-size:14px;
+      letter-spacing:.15em; }
+    #hud .score { color:var(--neon); font-size:26px; }
+    #hud .combo { color:var(--neon2); }
+    #hud .wind { position:absolute; top:56px; left:16px; font-size:12px; color:#8fd; }
+    #hCountRow { display:none; }
+    /* --- Level 3 scope vignette + breath meter --- */
+    #scope { position:absolute; inset:0; display:none; pointer-events:none;
+      background:radial-gradient(circle at center, transparent 30%, rgba(0,0,0,.55) 44%, #000 60%); }
+    #scope::before { content:""; position:absolute; left:50%; top:50%; width:46vh; height:46vh;
+      transform:translate(-50%,-50%); border:1px solid rgba(57,255,136,.5); border-radius:50%;
+      box-shadow:0 0 22px rgba(57,255,136,.28) inset; }
+    #breathWrap { position:absolute; left:50%; bottom:40px; transform:translateX(-50%);
+      width:220px; height:8px; border:1px solid #14503a; background:#08110d; display:none; }
+    #breath { height:100%; width:100%; background:linear-gradient(90deg,#39ff88,#8fffd0);
+      box-shadow:0 0 8px #39ff88; transition:width .05s linear; }
+    #breath.low { background:#ff4d4d; box-shadow:0 0 8px #ff4d4d; }
+    /* --- Level 2 charge/timing meter --- */
+    #striker { position:absolute; right:56px; top:50%; transform:translateY(-50%);
+      width:26px; height:300px; border:1px solid #14503a; background:#08110d; display:none;
+      box-shadow:0 0 12px #041 inset; }
+    #chgFill { position:absolute; left:0; bottom:0; width:100%; height:0%;
+      background:linear-gradient(#39ff88,#0a6b47); box-shadow:0 0 10px #39ff88; transition:height .016s linear; }
+    #chgFill.hot { background:linear-gradient(#ffffff,#8fffd0); box-shadow:0 0 18px #fff,0 0 32px var(--neon); }
+    #chgSweet { position:absolute; left:-4px; right:-4px; bottom:72%; height:28%;
+      border-top:1px solid var(--neon2); border-bottom:1px solid var(--neon2);
+      background:rgba(255,47,176,.14); box-shadow:0 0 10px var(--neon2); }
+    #striker .lbl { position:absolute; bottom:-22px; left:50%; transform:translateX(-50%);
+      font-size:9px; letter-spacing:.15em; color:#3a6a55; white-space:nowrap; }
+    #reticle { position:absolute; left:50%; top:50%; width:26px; height:26px;
+      transform:translate(-50%,-50%); }
+    #reticle::before,#reticle::after { content:""; position:absolute; background:var(--neon);
+      box-shadow:0 0 6px var(--neon); }
+    #reticle::before { left:50%; top:0; width:1px; height:100%; transform:translateX(-50%); }
+    #reticle::after { top:50%; left:0; height:1px; width:100%; transform:translateY(-50%); }
+    #pops { position:absolute; inset:0; }
+    .pop { position:absolute; transform:translate(-50%,-50%); font-size:20px; font-weight:bold;
+      text-shadow:0 0 10px currentColor; animation:pop 1s ease-out forwards; }
+    @keyframes pop { 0%{opacity:1} 100%{opacity:0; transform:translate(-50%,-140%) scale(1.3)} }
+    #banner { position:absolute; left:50%; top:38%; transform:translate(-50%,-50%);
+      text-align:center; display:none; }
+    #banner h2 { font-size:40px; color:var(--neon); letter-spacing:.2em; text-shadow:0 0 18px var(--neon); }
+    #banner p { margin-top:10px; color:var(--neon2); letter-spacing:.2em; }
+    #banner .btn { margin-top:22px; pointer-events:auto; display:inline-block; padding:10px 20px;
+      border:1px solid var(--neon); color:var(--neon); cursor:pointer; letter-spacing:.2em; }
+    #banner .btn:hover { background:var(--neon); color:#021; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="menu" class="overlay">
+    <h1>UNCANNY&nbsp;CARNIVAL</h1>
+    <div class="sub">TRUE SKILL · ZERO RIG · DETERMINISTIC</div>
+    <div class="games" id="games"></div>
+    <div class="tiers" id="tiers"><span>TIER</span></div>
+    <div class="hint">click a lit booth · pointer-lock aims · click to fire · ESC releases</div>
+  </div>
+
+  <div id="hud" class="overlay">
+    <div class="tl">
+      <div>BOOTH <span id="hGame">—</span> · T<span id="hTier">1</span></div>
+      <div class="score">SCORE <span id="hScore">0</span></div>
+    </div>
+    <div class="wind" id="hWind"></div>
+    <div class="tr">
+      <div id="hTimeRow">TIME <span id="hTime">0</span></div>
+      <div id="hCountRow"><span id="hCountLabel">SWINGS</span> <span id="hCount">0</span></div>
+      <div class="combo" id="hCombo"></div>
+    </div>
+    <div id="striker"><div id="chgSweet"></div><div id="chgFill"></div><div class="lbl">HOLD · RELEASE AT PEAK</div></div>
+    <div id="scope"></div>
+    <div id="breathWrap"><div id="breath"></div></div>
+    <div id="reticle"></div>
+    <div id="pops"></div>
+    <div id="banner">
+      <h2 id="bTitle">ROUND OVER</h2>
+      <p id="bBody"></p>
+      <span class="btn" id="bBack">◄ MIDWAY</span>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

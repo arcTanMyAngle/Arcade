@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\raylib-sys-b1faf199c8db6e9c\out\build\CMakeFiles\bc3dd80ea701d3d7a9557d3efc96d0c2\update_mappings.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\raylib-sys-5.5.1\raylib\src\external\glfw\src\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\raylib-sys-5.5.1\raylib\src\external\glfw\src\mappings.h.in">
+      <Filter>Header Files</Filter>
+    </None>
+    <None Include="C:\Users\bornt\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\raylib-sys-5.5.1\raylib\src\external\glfw\CMake\GenerateMappings.cmake" />
+    <None Include="C:\Users\bornt\Desktop\myWebby\galaga\rust\target\debug\build\raylib-sys-b1faf199c8db6e9c\out\build\raylib\external\glfw\src\CMakeFiles\update_mappings" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{541BFBCE-18F0-3ED7-8150-B83C6D588542}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{5FEBBE92-95F2-3649-BCF3-4DDC9DFD1694}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

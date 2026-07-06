@@ -1,0 +1,19 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-3.26/Modules/CPack.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/CPackComponent.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/FindOpenGL.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/FindPackageHandleStandardArgs.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/FindPackageMessage.cmake
+C:/Program Files/CMake/share/cmake-3.26/Modules/GNUInstallDirs.cmake
+C:/Program Files/CMake/share/cmake-3.26/Templates/CPackConfig.cmake.in
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/CompileDefinitions.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/GlfwImport.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/InstallConfigurations.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/JoinPaths.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/LibraryConfigurations.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/LibraryPathToLinkerFlags.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/PackConfigurations.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/PopulateConfigVariablesLocally.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/cmake/raylib-config-version.cmake
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/raylib.pc.in
+C:/Users/bornt/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/raylib-sys-5.5.1/raylib/src/CMakeLists.txt

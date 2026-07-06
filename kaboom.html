@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kaboom! by Activision</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    user-select: none;
+  }
+  #gameWrapper {
+    position: relative;
+  }
+  canvas {
+    display: block;
+    cursor: none;
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.82);
+    color: #fff;
+    text-align: center;
+    pointer-events: none;
+  }
+  #overlay h1 {
+    font-size: 48px;
+    color: #FFD700;
+    text-shadow: 3px 3px 0 #FF4500;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+  }
+  #overlay .byline {
+    font-size: 14px;
+    color: #aaa;
+    margin-bottom: 32px;
+    letter-spacing: 3px;
+  }
+  #overlay .score-display {
+    font-size: 22px;
+    color: #FFD700;
+    margin-bottom: 24px;
+  }
+  #overlay .instructions {
+    font-size: 13px;
+    color: #ccc;
+    line-height: 2;
+    margin-bottom: 32px;
+  }
+  #overlay .start-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 20px;
+    padding: 12px 36px;
+    background: #FF4500;
+    color: #fff;
+    border: 3px solid #FFD700;
+    cursor: pointer;
+    pointer-events: all;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  #overlay .start-btn:hover { background: #FF6020; }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+  <canvas id="canvas" width="400" height="560"></canvas>
+  <div id="overlay">
+    <h1>KABOOM!</h1>
+    <div class="byline">BY ACTIVISION</div>
+    <div class="instructions">
+      Move mouse left &amp; right to control your buckets<br>
+      Catch every bomb before it hits the ground<br>
+      Miss a bomb — lose a bucket<br>
+      Lose all buckets — GAME OVER
+    </div>
+    <button class="start-btn" id="startBtn">PLAY</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+
+const W = canvas.width;
+const H = canvas.height;
+
+// Colors (Activision retro palette)
+const COLORS = {
+  sky:       '#1A0A3A',
+  building:  '#4A1E8A',
+  bomber:    '#FF4040',
+  bomberHat: '#222',
+  bomberBody:'#FF6060',
+  bomb:      '#111',
+  bombFuse:  '#FFD700',
+  bucket:    ['#2288FF','#22AAFF','#44CCFF'],
+  bucketRim: '#88DDFF',
+  water:     '#22CCFF',
+  score:     '#FFD700',
+  lives:     '#FF4444',
+  ground:    '#3A1A6A',
+  flash:     '#FFFFFF',
+};
+
+let state;
+
+function initState() {
+  return {
+    phase: 'playing',  // playing | dead | gameover
+    score: 0,
+    hiScore: state ? state.hiScore : 0,
+    buckets: 3,
+    level: 0,
+    frame: 0,
+    deathFrame: 0,
+
+    bomber: {
+      x: 50,
+      dir: 1,
+      speed: 1.2,
+      width: 48,
+      height: 32,
+    },
+
+    bombs: [],
+    bombInterval: 90,   // frames between drops
+    bombTimer: 45,
+    bombSpeed: 1.8,
+
+    bucketX: W / 2,     // center of top bucket
+    bucketW: 56,
+    bucketH: 14,
+    bucketGap: 8,
+    bucketY: [H - 44, H - 68, H - 92],
+
+    particles: [],
+    splashes: [],
+  };
+}
+
+function spawnBomb(s) {
+  s.bombs.push({
+    x: s.bomber.x + s.bomber.width / 2,
+    y: 72,
+    vy: s.bombSpeed,
+    caught: false,
+    exploding: false,
+    explodeTimer: 0,
+  });
+}
+
+function levelUp(s) {
+  s.level++;
+  s.bomber.speed  = Math.min(1.2 + s.level * 0.25, 5.5);
+  s.bombSpeed     = Math.min(1.8 + s.level * 0.35, 8);
+  s.bombInterval  = Math.max(90 - s.level * 8, 22);
+}
+
+// Bucket top-row rectangle
+function bucketRect(s, row) {
+  const bw = s.bucketW - row * 6;
+  const bx = s.bucketX - bw / 2;
+  const by = s.bucketY[row];
+  return { x: bx, y: by, w: bw, h: s.bucketH };
+}
+
+function update(s, mouseX) {
+  if (s.phase === 'gameover') return;
+  s.frame++;
+
+  // Move bucket
+  s.bucketX = Math.max(s.bucketW / 2, Math.min(W - s.bucketW / 2, mouseX));
+
+  if (s.phase === 'dead') {
+    s.deathFrame++;
+    updateParticles(s);
+    if (s.deathFrame > 90) s.phase = 'playing';
+    return;
+  }
+
+  // Move bomber
+  s.bomber.x += s.bomber.dir * s.bomber.speed;
+  if (s.bomber.x + s.bomber.width >= W - 4) { s.bomber.x = W - 4 - s.bomber.width; s.bomber.dir = -1; }
+  if (s.bomber.x <= 4)                       { s.bomber.x = 4; s.bomber.dir = 1; }
+
+  // Drop bombs
+  s.bombTimer--;
+  if (s.bombTimer <= 0) {
+    spawnBomb(s);
+    s.bombTimer = s.bombInterval + Math.floor(Math.random() * 20);
+  }
+
+  // Update bombs
+  for (let i = s.bombs.length - 1; i >= 0; i--) {
+    const b = s.bombs[i];
+    if (b.caught) { s.bombs.splice(i, 1); continue; }
+    if (b.exploding) {
+      b.explodeTimer++;
+      if (b.explodeTimer > 40) s.bombs.splice(i, 1);
+      continue;
+    }
+
+    b.y += b.vy;
+
+    // Check bucket collision (all active rows)
+    let caught = false;
+    for (let row = 0; row < s.buckets; row++) {
+      const r = bucketRect(s, row);
+      if (b.x >= r.x && b.x <= r.x + r.w && b.y >= r.y && b.y <= r.y + r.h + b.vy) {
+        caught = true;
+        b.caught = true;
+        s.score += 10 * (row + 1);
+        if (s.score > s.hiScore) s.hiScore = s.score;
+        // splash
+        for (let p = 0; p < 8; p++) {
+          s.particles.push({
+            x: b.x, y: r.y,
+            vx: (Math.random() - 0.5) * 4,
+            vy: -Math.random() * 3 - 1,
+            life: 30, maxLife: 30,
+            color: COLORS.water,
+          });
+        }
+        // Level up every 100 pts
+        if (Math.floor(s.score / 100) > s.level) levelUp(s);
+        break;
+      }
+    }
+    if (caught) continue;
+
+    // Hit ground
+    if (b.y > H - 8) {
+      b.exploding = true;
+      b.explodeTimer = 0;
+      // Lose a bucket
+      s.buckets--;
+      s.deathFrame = 0;
+      // Explosion particles
+      for (let p = 0; p < 24; p++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = Math.random() * 5 + 1;
+        s.particles.push({
+          x: b.x, y: H - 10,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 3,
+          life: 50, maxLife: 50,
+          color: p % 2 === 0 ? '#FF4400' : '#FFD700',
+        });
+      }
+      if (s.buckets <= 0) {
+        s.phase = 'gameover';
+      } else {
+        s.phase = 'dead';
+      }
+    }
+  }
+
+  updateParticles(s);
+}
+
+function updateParticles(s) {
+  for (let i = s.particles.length - 1; i >= 0; i--) {
+    const p = s.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.18;
+    p.life--;
+    if (p.life <= 0) s.particles.splice(i, 1);
+  }
+}
+
+// ---- DRAW ----
+
+function drawBackground(s) {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0A0420');
+  grad.addColorStop(1, '#200840');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 40; i++) {
+    const sx = ((i * 97 + 13) % W);
+    const sy = ((i * 53 + 7) % (H * 0.55));
+    ctx.globalAlpha = 0.4 + (i % 3) * 0.2;
+    ctx.fillRect(sx, sy, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+
+  // Ground
+  ctx.fillStyle = '#2A0A50';
+  ctx.fillRect(0, H - 12, W, 12);
+  ctx.fillStyle = '#3A1A6A';
+  ctx.fillRect(0, H - 12, W, 3);
+}
+
+function drawBomber(s) {
+  const bx = s.bomber.x;
+  const by = 30;
+  const bw = s.bomber.width;
+  const bh = s.bomber.height;
+
+  // Body
+  ctx.fillStyle = '#CC2200';
+  ctx.fillRect(bx + 8, by + 8, bw - 16, bh - 8);
+
+  // Head
+  ctx.fillStyle = '#FF6644';
+  ctx.fillRect(bx + 14, by - 4, bw - 28, 16);
+
+  // Hat
+  ctx.fillStyle = '#111';
+  ctx.fillRect(bx + 10, by - 10, bw - 20, 8);
+  ctx.fillRect(bx + 6,  by - 4,  bw - 12, 4);
+
+  // Eyes
+  ctx.fillStyle = '#FFD700';
+  ctx.fillRect(bx + 17, by + 1, 5, 4);
+  ctx.fillRect(bx + 26, by + 1, 5, 4);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(bx + 18, by + 2, 2, 3);
+  ctx.fillRect(bx + 27, by + 2, 2, 3);
+
+  // Evil smile
+  ctx.fillStyle = '#000';
+  ctx.fillRect(bx + 16, by + 8, 16, 2);
+  ctx.fillRect(bx + 14, by + 6, 4, 3);
+  ctx.fillRect(bx + 30, by + 6, 4, 3);
+
+  // Arms
+  ctx.fillStyle = '#CC2200';
+  ctx.fillRect(bx, by + 10, 10, 6);
+  ctx.fillRect(bx + bw - 10, by + 10, 10, 6);
+}
+
+function drawBombs(s) {
+  for (const b of s.bombs) {
+    if (b.caught) continue;
+    if (b.exploding) {
+      const t = b.explodeTimer / 40;
+      const r = 20 * t;
+      ctx.save();
+      ctx.globalAlpha = 1 - t;
+      ctx.fillStyle = '#FF6600';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      continue;
+    }
+
+    // Bomb body
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Fuse (animated flicker)
+    const fuse = (s.frame % 6 < 3);
+    ctx.strokeStyle = fuse ? '#FFD700' : '#FF8800';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y - 7);
+    ctx.lineTo(b.x + 4, b.y - 13);
+    ctx.stroke();
+
+    // Spark
+    if (fuse) {
+      ctx.fillStyle = '#FFFF00';
+      ctx.beginPath();
+      ctx.arc(b.x + 4, b.y - 13, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawBuckets(s) {
+  for (let row = 0; row < 3; row++) {
+    const r = bucketRect(s, row);
+    const active = row < s.buckets;
+
+    if (!active) {
+      // Ghost bucket outline
+      ctx.strokeStyle = 'rgba(100,100,200,0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(r.x + 2, r.y, r.w - 4, r.h);
+      continue;
+    }
+
+    // Bucket body
+    const grad = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    grad.addColorStop(0, '#1166CC');
+    grad.addColorStop(1, '#0044AA');
+    ctx.fillStyle = grad;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+
+    // Water fill (top)
+    ctx.fillStyle = '#33AAEE';
+    ctx.fillRect(r.x + 2, r.y + 2, r.w - 4, 4);
+
+    // Rim highlight
+    ctx.fillStyle = '#66CCFF';
+    ctx.fillRect(r.x, r.y, r.w, 3);
+    ctx.fillRect(r.x, r.y, 3, r.h);
+  }
+}
+
+function drawParticles(s) {
+  for (const p of s.particles) {
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD(s) {
+  // Score
+  ctx.fillStyle = COLORS.score;
+  ctx.font = 'bold 18px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.fillText('SCORE', 10, 20);
+  ctx.fillText(String(s.score).padStart(6, '0'), 10, 42);
+
+  // Hi-score
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#AA88FF';
+  ctx.font = '12px "Courier New"';
+  ctx.fillText('HI ' + String(s.hiScore).padStart(6, '0'), W / 2, 18);
+
+  // Bucket lives
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#66CCFF';
+  ctx.font = 'bold 12px "Courier New"';
+  ctx.fillText('BUCKETS', W - 10, 20);
+  for (let i = 0; i < s.buckets; i++) {
+    ctx.fillStyle = '#2288FF';
+    ctx.fillRect(W - 22 - i * 16, 26, 12, 8);
+    ctx.fillStyle = '#66CCFF';
+    ctx.fillRect(W - 22 - i * 16, 26, 12, 2);
+  }
+
+  // Level
+  ctx.fillStyle = '#AA66FF';
+  ctx.font = '11px "Courier New"';
+  ctx.textAlign = 'right';
+  ctx.fillText('WAVE ' + (s.level + 1), W - 10, 50);
+}
+
+function drawDeathFlash(s) {
+  if (s.phase !== 'dead') return;
+  const t = s.deathFrame / 90;
+  if (s.deathFrame < 20) {
+    ctx.fillStyle = 'rgba(255,80,0,' + (0.6 * (1 - s.deathFrame / 20)) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function draw(s) {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground(s);
+  drawBomber(s);
+  drawBombs(s);
+  drawBuckets(s);
+  drawParticles(s);
+  drawHUD(s);
+  drawDeathFlash(s);
+}
+
+// ---- GAME LOOP ----
+
+let mouseX = W / 2;
+let animId = null;
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.clientX - rect.left) * (W / rect.width);
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.touches[0].clientX - rect.left) * (W / rect.width);
+}, { passive: false });
+
+function gameLoop() {
+  update(state, mouseX);
+  draw(state);
+
+  if (state.phase === 'gameover') {
+    showGameOver();
+    return;
+  }
+  animId = requestAnimationFrame(gameLoop);
+}
+
+function showGameOver() {
+  overlay.innerHTML = `
+    <h1>KABOOM!</h1>
+    <div class="byline">BY ACTIVISION</div>
+    <div class="score-display">
+      SCORE: ${String(state.score).padStart(6, '0')}<br>
+      <span style="color:#AA88FF;font-size:16px">BEST: ${String(state.hiScore).padStart(6, '0')}</span>
+    </div>
+    <div style="font-size:28px;color:#FF4444;margin-bottom:20px;letter-spacing:3px">GAME OVER</div>
+    <div class="instructions">The Mad Bomber wins this round...</div>
+    <button class="start-btn" id="startBtn">PLAY AGAIN</button>
+  `;
+  overlay.style.display = 'flex';
+  document.getElementById('startBtn').addEventListener('click', startGame);
+}
+
+function startGame() {
+  const prevHi = state ? state.hiScore : 0;
+  state = initState();
+  state.hiScore = prevHi;
+  overlay.style.display = 'none';
+  if (animId) cancelAnimationFrame(animId);
+  animId = requestAnimationFrame(gameLoop);
+}
+
+// Init
+state = initState();
+startBtn.addEventListener('click', startGame);
+
+// Draw title screen preview
+draw(state);
+</script>
+</body>
+</html>

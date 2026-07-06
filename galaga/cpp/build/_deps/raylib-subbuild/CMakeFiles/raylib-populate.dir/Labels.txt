@@ -1,0 +1,14 @@
+# Target labels
+ raylib-populate
+# Source files and their labels
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/raylib-populate
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/ee0a4b5710edbc8b79a5c8da9f28bc48/raylib-populate.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/ec10b450a33c3b32304b6dd1a8a44a56/raylib-populate-complete.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-build.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-configure.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-download.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-install.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-mkdir.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-patch.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-test.rule
+C:/Users/bornt/Desktop/myWebby/galaga/cpp/build/_deps/raylib-subbuild/CMakeFiles/88fbc8759770dd657023176580d4d876/raylib-populate-update.rule
