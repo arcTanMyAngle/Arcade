@@ -6,7 +6,7 @@ Paste the block below to start the next session.
 
 Act as Principal Game Engine Architect. Max token efficiency: no filler, short vars, comment only the math. Continue the **Uncanny Carnival** project.
 
-**Where:** `myWebby/carnival/` (Vite + npm, single runtime dep `three`). This is SEPARATE from the Rust kart game at `myWebby/` root — never touch root `plan.md`/`handoff.md`/`src/*.rs`.
+**Where:** `Arcade/carnival/` (Vite + npm, single runtime dep `three`). This is SEPARATE from the Rust kart game at `Arcade/` root — never touch root `plan.md`/`handoff.md`/`src/*.rs`.
 
 **Read first:** `carnival/handoff.md` (live state + "Adding a game" pattern + Level 2 build notes), `carnival/claude.md` (self-rules), `carnival/level_2_high_striker.md` (tier tables + physics).
 

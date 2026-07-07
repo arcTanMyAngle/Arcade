@@ -1,7 +1,7 @@
 # claude.md — Self-Instructions (Uncanny Carnival)
 
 ## Scope
-Applies to `myWebby/carnival/` only. Root `myWebby/` is a separate Rust kart project — never edit root `plan.md`/`handoff.md`/`src/*.rs`.
+Applies to `Arcade/carnival/` only. Root `Arcade/` is a separate Rust kart project — never edit root `plan.md`/`handoff.md`/`src/*.rs`.
 
 ## Token discipline
 - No filler, no restating instructions, no re-explaining done work. Output = code + dense docs.

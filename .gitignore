@@ -1,0 +1,39 @@
+# ============================================================
+#  Arcade — .gitignore
+#  Keep source in, keep build/dependency junk out.
+# ============================================================
+
+# ---- Rust (root wii_kart + galaga/rust) --------------------
+/target/
+galaga/rust/target/
+**/target/
+*.pdb
+
+# ---- Node / Vite (carnival) --------------------------------
+node_modules/
+carnival/dist/
+carnival/.vite/
+**/.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ---- C++ / CMake (galaga/cpp) ------------------------------
+galaga/cpp/build/
+**/build/
+*.obj
+*.exe
+*.ilk
+*.exp
+*.lib
+
+# ---- OS / editor cruft -------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# ---- Scratch / logs ----------------------------------------
+run_stderr.txt
+*.log

@@ -4,7 +4,7 @@
 deterministic physics kernel, procedural Web-Audio SFX, uncanny-valley PBR + clinical light.
 6 games × 5 tiers. Zero RNG rigging.
 
-**Where:** `myWebby/carnival/` (isolated — root `myWebby/` is the unrelated Rust kart game;
+**Where:** `Arcade/carnival/` (isolated — root `Arcade/` is the unrelated Rust kart game;
 do **not** touch root `plan.md`/`handoff.md`/`src/*.rs`).
 
 ## Current status
