@@ -65,6 +65,47 @@ const WHEEL_OFFSETS: [(f32, f32, bool); 4] = [
     (-0.80, -0.95, false),// rear-left
 ];
 
+const MINIMAP_SIZE: f32 = 190.0; // side of the HUD radar panel, px (M10)
+
+/// Top-down HUD minimap (M10): the circuit centerline sampled once into world-XZ
+/// points, plus the bounds to map live kart positions into the same panel. Built
+/// like the road meshes — once per track change, never per frame.
+struct Minimap {
+    loop_xz: Vec<Vec2>, // world-space (x, z) centerline samples, a closed loop
+    center: Vec2,       // world-XZ center of the layout
+    extent: f32,        // largest world-XZ span, for a uniform (undistorted) fit
+}
+
+impl Minimap {
+    fn build(track: &TrackSpline) -> Self {
+        let segs = track.segment_count();
+        let n = (segs * 8).max(8); // smooth enough for a small radar
+        let mut loop_xz = Vec::with_capacity(n);
+        let mut lo = Vec2::splat(f32::INFINITY);
+        let mut hi = Vec2::splat(f32::NEG_INFINITY);
+        for i in 0..n {
+            let u = i as f32 / n as f32 * segs as f32;
+            let p = track.point(u);
+            let xz = vec2(p.x, p.z);
+            loop_xz.push(xz);
+            lo = lo.min(xz);
+            hi = hi.max(xz);
+        }
+        Self { loop_xz, center: (lo + hi) * 0.5, extent: (hi - lo).max_element().max(1.0) }
+    }
+
+    /// Map a world-XZ point into the panel at (`ox`,`oy`) of side `size`. Uniform
+    /// scale (no aspect distortion) with a small inset; world +Z maps downward on
+    /// screen, matching a top-down look.
+    #[inline]
+    fn project(&self, xz: Vec2, ox: f32, oy: f32, size: f32) -> Vec2 {
+        let inset = size * 0.12;
+        let s = (size - 2.0 * inset) / self.extent;
+        let d = (xz - self.center) * s;
+        vec2(ox + size * 0.5 + d.x, oy + size * 0.5 + d.y)
+    }
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "Wii Kart — Rust / macroquad".to_owned(),
@@ -82,6 +123,8 @@ async fn main() {
     let mut game = Game::new();
     // GPU road meshes for the live track; rebuilt when `game.track_dirty` (M8).
     let mut track_meshes = build_track_meshes(&game.track);
+    // HUD radar outline for the live track; rebuilt on the same signal (M10).
+    let mut minimap = Minimap::build(&game.track);
     // Prebuilt splines + meshes for every selectable circuit, for the track-select
     // preview (built once at load — no per-frame mesh churn).
     let track_splines: Vec<TrackSpline> = TRACK_ORDER.iter().map(|ctor| ctor()).collect();
@@ -127,9 +170,10 @@ async fn main() {
         audio.update_engine(game.karts[0].speed_ratio(), racing);
         audio.update_drift(racing && game.karts[0].is_drifting());
 
-        // Rebuild the GPU road meshes when a new circuit was committed (M8).
+        // Rebuild the GPU road meshes + HUD radar when a new circuit was committed.
         if game.track_dirty {
             track_meshes = build_track_meshes(&game.track);
+            minimap = Minimap::build(&game.track);
             game.track_dirty = false;
         }
 
@@ -226,6 +270,11 @@ async fn main() {
                     }
                 }
                 draw_place_arrow(place_dir, place_flash);
+
+                // Radar (M10): hidden behind the full-screen standings board.
+                if game.race.phase != Phase::Finished {
+                    draw_minimap(&minimap, &game.karts);
+                }
 
                 if game.paused {
                     draw_pause_overlay();
@@ -731,6 +780,36 @@ fn draw_combat_hud(combat: &Combat, t: f32) {
         let w = pixel_text_width(label, s);
         draw_pixel_text(label, (screen_width() - w) * 0.5, 200.0, s, ORANGE_SPARK);
     }
+}
+
+/// Draw the HUD radar (M10): a translucent panel, the circuit outline, and a dot
+/// per kart — AI muted gold, the player a bright ringed green so it reads at a
+/// glance. Top-right corner; purely render-side (reads live positions).
+fn draw_minimap(mm: &Minimap, karts: &[KartState]) {
+    let size = MINIMAP_SIZE;
+    let ox = screen_width() - size - 24.0;
+    let oy = 24.0;
+
+    draw_rectangle(ox, oy, size, size, Color::new(0.0, 0.0, 0.0, 0.35));
+    draw_rectangle_lines(ox, oy, size, size, 3.0, Color::new(1.0, 1.0, 1.0, 0.25));
+
+    // Circuit outline: a closed loop of dim segments.
+    let outline = Color::new(0.90, 0.90, 1.00, 0.55);
+    let pts = &mm.loop_xz;
+    for i in 0..pts.len() {
+        let a = mm.project(pts[i], ox, oy, size);
+        let b = mm.project(pts[(i + 1) % pts.len()], ox, oy, size);
+        draw_line(a.x, a.y, b.x, b.y, 2.0, outline);
+    }
+
+    // AI dots first so the player marker always sits on top.
+    for k in karts.iter().skip(1) {
+        let p = mm.project(vec2(k.position.x, k.position.z), ox, oy, size);
+        draw_circle(p.x, p.y, 3.5, Color::new(0.85, 0.75, 0.35, 0.9));
+    }
+    let p0 = mm.project(vec2(karts[0].position.x, karts[0].position.z), ox, oy, size);
+    draw_circle(p0.x, p0.y, 6.0, Color::new(0.35, 1.00, 0.55, 1.0));
+    draw_circle_lines(p0.x, p0.y, 6.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.9));
 }
 
 /// Flash a place-change arrow beside the POS readout: green ▲ on a gain, red ▼ on a

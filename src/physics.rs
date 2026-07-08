@@ -97,6 +97,17 @@ const AI_LOOKAHEAD_U: f32 = 0.25; // spline parameter ahead to aim at
 const AI_STEER_GAIN: f32 = 1.6;
 const AI_DRIFT_ANGLE: f32 = 0.5; // start drifting past this heading error (rad)
 
+// Rubber-band catch-up (M10). A trailing AI gets a bounded, gap-scaled boost to
+// its effective driving skill (and, in combat.rs, its drift-farm aggression) so
+// back-markers close up and the leader can't cruise. The factor is a smooth
+// saturating curve of the gap-behind-leader, so it never snaps and is honest —
+// it only lifts an AI's *own* ceiling, never teleports positions.
+/// Most a fully-trailing kart's factor exceeds 1.0 (+25% at the asymptote).
+pub const RUBBER_BAND_MAX: f32 = 0.25;
+/// Gap (in rank-key units, where 1.0 = one full lap behind the leader) at which
+/// the factor reaches half of `RUBBER_BAND_MAX`. Smaller = help bites sooner.
+const RUBBER_BAND_GAP_HALF: f32 = 0.4;
+
 // ----------------------------------------------------------------------------
 // Input
 // ----------------------------------------------------------------------------
@@ -518,16 +529,33 @@ pub fn ai_input(kart: &KartState, track: &TrackSpline, skill: f32) -> Input {
     }
 }
 
+/// Rubber-band catch-up factor (M10): a bounded, strictly-increasing function of
+/// `gap` (how far a kart trails the leader, in rank-key units — 1.0 ≈ a full lap).
+/// Returns exactly 1.0 for the leader (`gap == 0`), rising smoothly toward
+/// `1.0 + RUBBER_BAND_MAX` as the gap grows. Pure and cheap (one divide), so the
+/// AI passes can scale each trailing kart's skill/aggression by it every tick.
+#[inline]
+pub fn rubber_band(gap: f32) -> f32 {
+    let g = gap.max(0.0);
+    1.0 + RUBBER_BAND_MAX * g / (g + RUBBER_BAND_GAP_HALF)
+}
+
 /// Fill `out` with AI inputs for every kart in parallel across all cores.
-/// Caller owns the buffers — no allocation happens here.
+/// `gaps[i]` is kart i's rank-key gap behind the leader; a trailing kart's
+/// effective skill is lifted by [`rubber_band`] so it corners a touch better and
+/// closes up (M10). Caller owns the buffers — no allocation happens here.
 pub fn compute_ai_inputs(
     karts: &[KartState],
     skills: &[f32],
+    gaps: &[f32],
     track: &TrackSpline,
     out: &mut [Input],
 ) {
     out.par_iter_mut().enumerate().for_each(|(i, o)| {
-        *o = ai_input(&karts[i], track, skills[i]);
+        // Fold the catch-up bonus into skill as an additive lift (capped at 1),
+        // so a back-marker aims a little further ahead through corners.
+        let skill = (skills[i] + (rubber_band(gaps[i]) - 1.0)).min(1.0);
+        *o = ai_input(&karts[i], track, skill);
     });
 }
 
@@ -861,5 +889,30 @@ mod tests {
         assert_eq!(ps.particles.len(), 8); // ring buffer never grows
         ps.update(0.5);
         assert!(ps.particles.iter().all(|p| p.life <= 0.5 + 1e-6));
+    }
+
+    /// Rubber-band factor (M10) is monotonic in the gap and stays in
+    /// `[1, 1 + RUBBER_BAND_MAX]` — the leader gets nothing, the tail gets the cap.
+    #[test]
+    fn rubber_band_is_monotonic_and_bounded() {
+        // Leader (zero gap) is never helped.
+        assert!((rubber_band(0.0) - 1.0).abs() < 1e-6);
+        // A negative gap (defensive) still clamps to the no-help floor.
+        assert!((rubber_band(-5.0) - 1.0).abs() < 1e-6);
+
+        // Strictly increasing across a sweep of growing gaps.
+        let mut prev = rubber_band(0.0);
+        let mut g = 0.05;
+        while g <= 6.0 {
+            let f = rubber_band(g);
+            assert!(f > prev, "factor must strictly increase with gap at g={g}");
+            assert!(f >= 1.0 && f <= 1.0 + RUBBER_BAND_MAX + 1e-6, "factor out of bounds: {f}");
+            prev = f;
+            g += 0.05;
+        }
+        // A huge gap approaches, but never exceeds, the cap.
+        let far = rubber_band(1e6);
+        assert!(far <= 1.0 + RUBBER_BAND_MAX + 1e-6);
+        assert!(far > 1.0 + RUBBER_BAND_MAX * 0.99, "far gap should be near the cap");
     }
 }

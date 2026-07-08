@@ -169,6 +169,9 @@ pub struct Game {
     pub prev_karts: Vec<KartState>,
     pub inputs: Vec<Input>,
     pub places: Vec<u8>,
+    /// Per-kart gap behind the leader (rank-key units), refilled each substep and
+    /// fed to the AI passes for M10 rubber-band catch-up. Parallel to `karts`.
+    pub gaps: Vec<f32>,
     pub skills: Vec<f32>,
     pub particles: ParticleSystem,
     pub race: RaceDirector,
@@ -205,6 +208,7 @@ impl Game {
         let prev_karts = karts.clone();
         let inputs = vec![Input::default(); NUM_KARTS];
         let places = vec![1u8; NUM_KARTS];
+        let gaps = vec![0.0f32; NUM_KARTS];
         let skills: Vec<f32> = (0..NUM_KARTS).map(|i| 0.55 + (i as f32 * 0.07) % 0.45).collect();
         let particles = ParticleSystem::with_capacity(PARTICLE_CAPACITY);
 
@@ -234,6 +238,7 @@ impl Game {
             prev_karts,
             inputs,
             places,
+            gaps,
             skills,
             particles,
             race,
@@ -416,8 +421,11 @@ impl Game {
                 continue;
             }
 
+            // Gap-behind-leader for every kart, so trailing AI get an honest
+            // rubber-band lift to their driving skill and drift-farm aggression (M10).
+            self.race.gaps_into(&mut self.gaps);
             // AI for everyone (cheap), then stamp the player's input on slot 0.
-            compute_ai_inputs(&self.karts, &self.skills, &self.track, &mut self.inputs);
+            compute_ai_inputs(&self.karts, &self.skills, &self.gaps, &self.track, &mut self.inputs);
             self.inputs[0] = player;
             if !first {
                 // Edge-triggered actions fire only on the first substep of a frame.
@@ -427,7 +435,7 @@ impl Game {
             // Combat AI nudges the AI karts' driving (dodge / aim / catch-up drift).
             if self.race.phase == Phase::Racing {
                 self.race.places_into(&mut self.places);
-                self.combat.plan_ai(&self.karts, &self.places, &mut self.inputs);
+                self.combat.plan_ai(&self.karts, &self.places, &self.gaps, &mut self.inputs);
             }
             // Freeze the grid during "3..2..1" and after the finish.
             if self.race.inputs_locked() {

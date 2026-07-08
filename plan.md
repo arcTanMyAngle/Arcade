@@ -2,12 +2,12 @@
 
 The "Combat Grand Prix" pivot (**M1–M4**), **M5** (kart-to-kart collision), **M6**
 (game-flow state machine), **M7** (procedural audio), **M8** (track variety + boost
-pads), **M5.1** (slipstream/draft) and **M9** (juice & recovery + longer laps) are all
-**done** — see `handoff.md` for architecture and the completed-milestone log below. This
-plan covers the **remaining three milestones**, ordered by impact. Each lists scope, the
-files it touches, a **measurable DoD**, and a **benchmark gate**. Preserve the five core
-invariants in `handoff.md` (60 Hz fixed step, zero-alloc loop, rayon, lean `KartState`,
-procedural assets) in everything below.
+pads), **M5.1** (slipstream/draft), **M9** (juice & recovery + longer laps) and **M10**
+(minimap + rubber-band AI) are all **done** — see `handoff.md` for architecture and the
+completed-milestone log below. This plan covers the **remaining two milestones** (M11, M12),
+ordered by impact. Each lists scope, the files it touches, a **measurable DoD**, and a
+**benchmark gate**. Preserve the five core invariants in `handoff.md` (60 Hz fixed step,
+zero-alloc loop, rayon, lean `KartState`, procedural assets) in everything below.
 
 ## How "done" is judged (applies to every milestone)
 - **Tests:** each milestone adds ≥1 headless test; `cargo test` stays green and **0 warnings**.
@@ -26,7 +26,7 @@ Numeric targets are starting tunables, not laws — but ship with them measured 
 |---|---|---|
 | ~~**M5.1 Draft**~~ ✅ | **≈ +1.5 µs** (budget < +20) | reused the grid (`for_each_within`) + a parallel `f32` array, 0 new alloc |
 | ~~**M9 Juice/Recovery**~~ ✅ | **≈ +5 µs** (budget < +15) | respawn rides the ground query; shake/feedback render-side; hit-stop = substep skip; +5 µs is the bigger grid from `LAP_SCALE` |
-| **M10 Minimap/Rubber-band** | **< +10 µs** | per-kart gap scalar in the AI pass; the minimap is render-side |
+| ~~**M10 Minimap/Rubber-band**~~ ✅ | **≈ +0 µs** (budget < +10) | one O(n) gap scan + two `rubber_band` divides/AI kart (sub-µs); the minimap is render-side. Substep **144.5 µs** (within noise of the M9 152) |
 | **M11 Settings** | **≈ +0 µs** | config/UI only (fewer karts only *speeds up* the substep) |
 | **M12 Ghost replay** | **< +10 µs** | one pose write/substep into a pre-sized ring; playback render-side |
 | **Running total** | must keep substep **< 500 µs** | currently ~134 µs → ~190 µs worst case, ample headroom |
@@ -63,25 +63,20 @@ need a `cargo run --release` pass.** See the completed-milestone log + `handoff.
 
 ---
 
-### M10 — Minimap / radar + rubber-band AI
-**Why:** the player has no spatial awareness of the field, and races can blow out. Both fixes
-ride data that already exists (`RaceProgress`, positions, `place_of`).
-**Scope:** a HUD **minimap** — the track outline (sample the spline once at load) with a dot
-per kart (player highlighted), updated each frame from positions. **Rubber-band AI** — scale
-AI `skill`/aggression by gap to the leader so back-markers close up and the leader can't
-cruise; a pure `rubber_band(gap) -> factor` so it's testable.
-**Touches:** `main.rs` (minimap render from a prebuilt outline + live positions), `combat.rs`
-(gap-scaled aggression in `plan_ai`) / `physics.rs` (gap-scaled AI skill in `compute_ai_inputs`),
-`game.rs` (compute each AI's gap-to-leader from `race`, pass into the AI pass).
-
-**DoD (measurable):**
-- **Minimap** draws all `NUM_KARTS` as dots in correct relative track positions, player tinted
-  distinctly (smoke-tested visually).
-- **Rubber-band** factor is a **bounded, monotonic** function of gap (define `RUBBER_BAND_MAX`,
-  e.g. ≤ +25 % effective aggression for the tail, 0 for the leader).
-- **Headless tests:** `rubber_band` is monotonic in gap and clamped to `[1, 1+RUBBER_BAND_MAX]`;
-  an AI far behind has a strictly higher effective aggression than the same AI in the lead.
-- **Benchmark:** substep delta **< +10 µs** (one extra per-kart scalar; minimap is render-side).
+### M10 — Minimap / radar + rubber-band AI ✅ **DONE (2026-07-08)**
+Shipped to spec. **Minimap** (`main.rs`, render-side): a `Minimap` struct samples the live
+circuit centerline once into world-XZ points (rebuilt on `track_dirty`, like the road meshes),
+`project`s them + every kart's live position into a top-right panel with a uniform, undistorted
+fit — AI dots muted gold, the player a ringed bright green. **Rubber-band** (`physics::rubber_band`,
+pure + testable): `1 + RUBBER_BAND_MAX·g/(g+GAP_HALF)` — a bounded, strictly-increasing function of
+the gap-behind-leader (`RUBBER_BAND_MAX = 0.25`, `GAP_HALF = 0.4` rank-key units), 1.0 for the
+leader. `RaceDirector::gaps_into` fills a per-kart gap array each substep (like `places`);
+`compute_ai_inputs` folds the factor into effective skill (better cornering) and `combat::plan_ai`
+into `effective_aggression` (harder drift-farming). Player untouched — only AI ceilings lift, no
+teleporting. 2 headless tests (→ **47**): `rubber_band` monotonic + bounded, and a trailing AI
+out-commits the same AI in the lead. Substep **144.5 µs** (≈ +0 vs M9). **Minimap look + rubber-band
+feel need a `cargo run --release` pass** (dev env has no GPU): does the radar read clearly, and does
+the field close up without feeling rigged? `GAP_HALF`/`RUBBER_BAND_MAX` are the tuning knobs.
 
 ---
 
@@ -154,10 +149,13 @@ times if needed).
 
 ## Recommended order + pending verification
 Build order: **M10 → M11 → M12** (awareness/balance, then configurability, then the replay
-flair). M5.1 (depth) and M9 (feel + recovery + longer laps) are done. All remaining fit
-comfortably under the 500 µs substep gate (see the table above). **Recommended next: M10.**
+flair). M5.1, M9, and **M10** are done. The remaining two fit comfortably under the 500 µs substep
+gate (see the table above). **Recommended next: M11 (settings + race options).**
 
 **Pending human verification (one `cargo run --release` pass — no GPU/audio in the dev env):**
+- **M10 minimap + rubber-band** — does the radar read clearly (outline + dots, player distinct),
+  and does the field close up believably without feeling rigged? Tune `GAP_HALF` (bite sooner) /
+  `RUBBER_BAND_MAX` (ceiling) if the catch-up is too weak/strong.
 - **M9 juice + longer laps** — shake punch/decay, the hit-stop pause on a player spin-out,
   the SPUN-OUT/▲▼/FINAL-LAP HUD pops, OOB respawn off the big hill / after a mortar AoE, and
   especially the **1.5× longer laps**: do the three circuits still drive well, and is the
@@ -179,6 +177,18 @@ comfortably under the 500 µs substep gate (see the table above). **Recommended 
 ---
 
 ## Completed milestone log (reference — details in `handoff.md` + memory)
+- **M10 — Minimap / radar + rubber-band AI** ✅ (2026-07-08): spatial awareness + catch-up.
+  **Minimap** (`main.rs`): a `Minimap` struct samples the live circuit centerline once into
+  world-XZ points (rebuilt on `track_dirty`), then `project`s outline + live kart positions into
+  a top-right panel (uniform undistorted fit; AI gold, player ringed green). **Rubber-band**:
+  new pure `physics::rubber_band(gap) = 1 + RUBBER_BAND_MAX·g/(g+GAP_HALF)` (bounded, strictly
+  increasing, 1.0 for the leader; `MAX = 0.25`, `GAP_HALF = 0.4`). `RaceDirector::gaps_into`
+  fills a per-kart gap array each substep (parallel array, like `places`); `compute_ai_inputs`
+  folds it into effective driving skill and `combat::plan_ai` into a new `effective_aggression`
+  (drift-farm harder the further you trail). Player untouched — only AI ceilings rise, no
+  position teleporting. 2 headless tests (**47 total**: `rubber_band` monotonic+bounded, trailing
+  AI out-commits the lead), substep **144.5 µs** (≈ +0 vs M9), 0 new per-tick alloc. **Minimap
+  look + rubber-band feel need a `cargo run --release` pass.** Next-up: **M11**.
 - **M9 — Juice & recovery (+ longer laps)** ✅ (2026-06-21): a game-feel pass plus the last
   tech-debt item. **Hit-stop** (`game.rs`): the `run_substeps` loop drains `FIXED_DT` then
   `continue`s while `hitstop > 0` — a whole-sim freeze that still advances the clock (no

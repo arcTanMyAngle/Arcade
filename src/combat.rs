@@ -734,7 +734,7 @@ impl Combat {
     /// trailing karts commit harder to drifts for catch-up mini-turbos. The
     /// player (index 0) is never touched. Cheap and single-threaded — it's a
     /// light post-process over the parallel spline-follower's output.
-    pub fn plan_ai(&self, karts: &[KartState], places: &[u8], inputs: &mut [Input]) {
+    pub fn plan_ai(&self, karts: &[KartState], places: &[u8], gaps: &[f32], inputs: &mut [Input]) {
         for i in 1..karts.len() {
             if self.karts[i].stunned() {
                 continue;
@@ -756,8 +756,10 @@ impl Combat {
                 }
             }
 
-            // 3) Strategize — back-markers drift harder to farm mini-turbos.
-            let agg = aggression(places.get(i).copied().unwrap_or(1), karts.len());
+            // 3) Strategize — back-markers drift harder to farm mini-turbos, and
+            // the further one trails the leader the more it commits (M10 rubber-band).
+            let place = places.get(i).copied().unwrap_or(1);
+            let agg = effective_aggression(place, karts.len(), gaps.get(i).copied().unwrap_or(0.0));
             if agg > 0.75 && karts[i].grounded && inputs[i].steer.abs() > 0.3 {
                 inputs[i].drift_held = true;
                 if !karts[i].is_drifting() {
@@ -1292,6 +1294,15 @@ fn aggression(place: u8, n: usize) -> f32 {
     0.5 + 0.5 * ((place.max(1) as f32 - 1.0) / (n as f32 - 1.0))
 }
 
+/// Drift-farm aggression scaled by the M10 rubber-band catch-up factor: the base
+/// standing aggression, lifted by how far this kart trails the leader (`gap` in
+/// rank-key units). Two knobs push a back-marker to commit harder — its place in
+/// the order *and* its absolute distance behind — so a kart adrift mid-pack farms
+/// mini-turbos it otherwise wouldn't, while the leader (gap 0) is never boosted.
+fn effective_aggression(place: u8, n: usize, gap: f32) -> f32 {
+    aggression(place, n) * crate::physics::rubber_band(gap)
+}
+
 /// Signed steer in [-1, 1] that rotates `forward` toward `aim` about `up`,
 /// matching the sim's convention (steer > 0 turns right). Used as an aim nudge.
 fn aim_steer(forward: Vec3, up: Vec3, aim: Vec3) -> f32 {
@@ -1410,6 +1421,21 @@ mod tests {
         assert!((aggression(1, 8) - 0.5).abs() < 1e-6, "leader is least aggressive");
         assert!((aggression(8, 8) - 1.0).abs() < 1e-6, "last place is most aggressive");
         assert!(aggression(1, 8) < aggression(8, 8));
+    }
+
+    /// M10: an AI adrift at the back of the field commits far harder than the very
+    /// same AI would while leading — the rubber-band lifts its effective aggression.
+    #[test]
+    fn rubber_band_lifts_trailing_aggression() {
+        // Same kart, two race situations: last + a big gap vs first + no gap.
+        let trailing = effective_aggression(8, 8, 1.5);
+        let leading = effective_aggression(1, 8, 0.0);
+        assert!(trailing > leading, "a trailing kart must out-commit the same kart in the lead");
+
+        // The catch-up is monotonic in the gap for a fixed place, and the leader
+        // (gap 0) is never lifted above its bare standing aggression.
+        assert!(effective_aggression(4, 8, 1.0) > effective_aggression(4, 8, 0.2));
+        assert!((effective_aggression(1, 8, 0.0) - aggression(1, 8)).abs() < 1e-6);
     }
 
     #[test]
@@ -1683,6 +1709,7 @@ mod tests {
         let skills: Vec<f32> = (0..N).map(|i| 0.55 + (i as f32 * 0.07) % 0.45).collect();
         let mut inputs = vec![Input::default(); N];
         let places = vec![1u8; N];
+        let gaps = vec![0.0f32; N];
         let mut combat = Combat::new(&track, &classes, 12);
         let mut particles = ParticleSystem::with_capacity(1024);
         let mut events = SfxQueue::new();
@@ -1693,8 +1720,8 @@ mod tests {
                     particles: &mut ParticleSystem,
                     events: &mut SfxQueue| {
             events.clear(); // drained per frame in the real loop; mirror that here
-            compute_ai_inputs(karts, &skills, &track, inputs);
-            combat.plan_ai(karts, &places, inputs);
+            compute_ai_inputs(karts, &skills, &gaps, &track, inputs);
+            combat.plan_ai(karts, &places, &gaps, inputs);
             // `combat.draft` holds the previous tick's factors, exactly as the real
             // loop feeds them in — so the bench measures the live draft path.
             step_all(karts, inputs, &combat.draft, &track, FIXED_DT);

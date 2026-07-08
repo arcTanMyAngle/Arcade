@@ -4,12 +4,13 @@
 built in Rust on `macroquad` 0.4.14. Originally a driving prototype; evolved through a
 4-milestone "Combat Grand Prix" pivot into a full race + combat game.
 
-**Status:** ✅ Playable. Builds clean, **45 tests pass (+1 ignored bench), zero
+**Status:** ✅ Playable. Builds clean, **47 tests pass (+1 ignored bench), zero
 warnings**. Custom GLSL shaders confirmed compiling and running on the target Intel
 Arc iGPU. Karts physically collide (M5); the whole thing is wrapped in a game-flow
 state machine — Menu → ClassSelect → TrackSelect → Race → Results — with in-race
-pause (M6); it has a **voice: 100% procedural audio** (M7, `src/audio.rs`); and it now
-has **3 selectable circuits + boost pads** (M8).
+pause (M6); it has a **voice: 100% procedural audio** (M7, `src/audio.rs`); it has
+**3 selectable circuits + boost pads** (M8); and it now has a **HUD minimap + rubber-band
+catch-up AI** (M10).
 
 ---
 
@@ -48,13 +49,13 @@ Single binary crate. `main.rs` is the crate root and carries `#![allow(dead_code
 
 | File | Responsibility | Key public types |
 |---|---|---|
-| [src/main.rs](src/main.rs) | Window, GPU shell: samples keys → `FrameInput`, drives `Game`, chase/menu/preview/track cameras (+ **M9 shake offset**), render passes (material-bracketed) per `GameState`, boost-pad pass, all HUD + front-end screens (+ **M9 SPUN-OUT pulse / position ▲▼ / FINAL-LAP flash**); rebuilds road meshes on `track_dirty` | — |
-| [src/game.rs](src/game.rs) | **Top-level game flow (M6):** `GameState` machine (now incl. `TrackSelect`, M8), owns all sim + CPU-mesh state, holds the 60 Hz fixed-step loop, class-select → kart-0 commit, track commit, pause, **M9 hit-stop + screen-shake + respawn prev-snap**; emits audio events. Headless (no GPU) | `Game`, `GameState`, `Flow`, `FrameInput`, `CLASS_ORDER`, `TRACK_ORDER`, `TRACK_NAMES`, `NUM_KARTS` |
-| [src/physics.rs](src/physics.rs) | 60 Hz arcade kart sim: driving, drift/trick/boost state machines, gravity/ground, **OOB respawn** (M9), rayon-parallel AI + particles | `KartState`, `Input`, `ParticleSystem`, `RenderPose`, `SparkStage` |
+| [src/main.rs](src/main.rs) | Window, GPU shell: samples keys → `FrameInput`, drives `Game`, chase/menu/preview/track cameras (+ **M9 shake offset**), render passes (material-bracketed) per `GameState`, boost-pad pass, all HUD + front-end screens (+ **M9 SPUN-OUT pulse / position ▲▼ / FINAL-LAP flash**, **M10 `Minimap` radar**); rebuilds road meshes + minimap on `track_dirty` | `Minimap` |
+| [src/game.rs](src/game.rs) | **Top-level game flow (M6):** `GameState` machine (now incl. `TrackSelect`, M8), owns all sim + CPU-mesh state (incl. the **M10 `gaps` array**), holds the 60 Hz fixed-step loop, class-select → kart-0 commit, track commit, pause, **M9 hit-stop + screen-shake + respawn prev-snap**; emits audio events. Headless (no GPU) | `Game`, `GameState`, `Flow`, `FrameInput`, `CLASS_ORDER`, `TRACK_ORDER`, `TRACK_NAMES`, `NUM_KARTS` |
+| [src/physics.rs](src/physics.rs) | 60 Hz arcade kart sim: driving, drift/trick/boost state machines, gravity/ground, **OOB respawn** (M9), **rubber-band factor** (M10, `rubber_band`), rayon-parallel AI + particles | `KartState`, `Input`, `ParticleSystem`, `RenderPose`, `SparkStage`, `rubber_band` |
 | [src/track_3d.rs](src/track_3d.rs) | Closed cubic-Bézier circuits (3 layouts, M8; **`LAP_SCALE` longer laps**, M9), arc-length LUT, banked frames, O(1) ground queries, procedural road mesh, **boost pads** (`boost_at` reuses `track_u`) | `TrackSpline`, `Frame`, `GroundInfo`, `BoostPad` |
 | [src/mesh_gen.rs](src/mesh_gen.rs) | All procedural meshes (kart + class cannon, wheel, ammo crate, projectiles, **boost pad**), pixel font, HUD icons. `MeshBuilder` stores **normals + unlit albedo** for the GPU to light | `MeshBuilder`, `build_*`, `KART_PALETTE`, spark colors |
-| [src/race.rs](src/race.rs) | Race Director: countdown, anti-cheat checkpoint laps, live standings, finish board | `RaceDirector`, `Phase`, `RaceProgress`, `TOTAL_LAPS` |
-| [src/combat.rs](src/combat.rs) | Cannons/classes, ammo, projectile pool, **lock-free spatial hash**, hit/spinout, combat AI (lead/dodge/standing), **kart-vs-kart collision** (per-class `mass`), **slipstream/draft factor** (M5.1, `compute_draft` → `Combat.draft`), **screen-shake trauma** (M9, `Combat.trauma`); pushes combat `Sfx` into the event sink | `Combat`, `ChassisClass`, `Projectile`, `ProjKind`, `SpatialGrid`, `KartCombat`, `AmmoCrate` |
+| [src/race.rs](src/race.rs) | Race Director: countdown, anti-cheat checkpoint laps, live standings, finish board, **per-kart gap-to-leader** (`gaps_into`, M10) | `RaceDirector`, `Phase`, `RaceProgress`, `TOTAL_LAPS` |
+| [src/combat.rs](src/combat.rs) | Cannons/classes, ammo, projectile pool, **lock-free spatial hash**, hit/spinout, combat AI (lead/dodge/standing, **rubber-band `effective_aggression`** M10), **kart-vs-kart collision** (per-class `mass`), **slipstream/draft factor** (M5.1, `compute_draft` → `Combat.draft`), **screen-shake trauma** (M9, `Combat.trauma`); pushes combat `Sfx` into the event sink | `Combat`, `ChassisClass`, `Projectile`, `ProjKind`, `SpatialGrid`, `KartCombat`, `AmmoCrate` |
 | [src/audio.rs](src/audio.rs) | **Procedural audio (M7):** pure `synth` submodule (DSP + WAV encoder + per-sound recipes + engine/drift loop generators) is headless-testable; device-side `AudioBank` decodes the in-memory WAVs and drives playback (one-shots, speed-crossfaded engine bands, gated drift loop). `Sfx`/`SfxQueue` are the zero-alloc event wire | `AudioBank`, `Sfx`, `SfxQueue`, `synth::*` |
 | [src/shaders.rs](src/shaders.rs) | Three custom GLSL ES materials (toon / road-noise / crate-pulse) with graceful fallback | `Shaders`, `LIGHT_DIR` |
 
@@ -137,17 +138,18 @@ These were explicit design directives and are upheld throughout — preserve the
 - **Audio events never cross a `par_iter`** (invariant #3): every `events.push(..)` happens in a single-threaded phase — flow logic in `Game::update`, the post-`step_all` diffs in `run_substeps`, and combat's single-threaded `handle_firing`/`apply_hits`/`handle_pickups`/`resolve_kart_collisions`. Bumps are sounded only when **kart 0 is in the pair** and pickups only for **kart 0** (no positional audio yet, so AI-on-AI events would just be noise). The 4 per-class fire timbres are all reachable because the player can pick any class.
 - **Boost pads reuse the ground query — no new broadphase** (M8): a `BoostPad` is just `{u_center, u_half, half_width, frame}`; `track.boost_at(track_u, lateral)` is an O(pads) interval test in spline-parameter space against values the per-kart ground query already produced, so the check rides `step_all` with zero added spatial work and zero alloc. Pads grant a boost via the **existing `boost_time`**, so the camera FOV juice *and* the M7 boost SFX (the `run_substeps` boost-edge diff) fire automatically — no new plumbing. Detection and the visual footprint are centered strips (`PAD_HALF_WIDTH < ROAD_HALF_WIDTH`), so hugging the curb misses.
 - **Alternate tracks must be star-convex / non-self-intersecting in XZ** (M8): the lock-free collision hash is 2D (XZ), which assumes the loop never overlaps itself vertically. New circuits (`speedway`, `serpentine`) keep anchors at monotonically increasing angle around the origin (radius may vary) so the Catmull-Rom loop stays simple. A figure-eight would break the hash — don't add one without making the grid 3D first.
-- **Track switching rebuilds, via `track_dirty`** (M8): `Game` owns the sim-side `TrackSpline` (+ its pads) and rebuilds `Combat`/race/grid on a track commit (a transition — allocation is fine there); the **GPU** road meshes live in `main`, which watches `game.track_dirty` and regenerates them once per change. `restart_race` (R) keeps the same track, so it never sets the flag.
+- **Track switching rebuilds, via `track_dirty`** (M8): `Game` owns the sim-side `TrackSpline` (+ its pads) and rebuilds `Combat`/race/grid on a track commit (a transition — allocation is fine there); the **GPU** road meshes live in `main`, which watches `game.track_dirty` and regenerates them once per change. `restart_race` (R) keeps the same track, so it never sets the flag. The **M10 `Minimap`** outline rides the same `track_dirty` signal — rebuilt once per track change in `main`, never per frame.
+- **Rubber-band lifts ceilings, never teleports positions** (M10): the catch-up is an *honest* boost — `physics::rubber_band(gap)` scales only a trailing **AI**'s effective driving skill (`compute_ai_inputs`, folded in as an additive lift so it can't push skill past 1) and its drift-farm `effective_aggression` (`combat::plan_ai`). It never touches the player (slot 0 is overwritten with real input right after the AI pass) and never edits standings — a back-marker just corners a touch sharper and farms more mini-turbos, so every position is still earned (the "honest, no rigging" house rule). Gap is measured in **rank-key units** (1.0 = one lap), so it's track-length-independent and free of any arc-length lookup. `gaps_into` is filled every substep (like `places`) into a `Game.gaps` parallel array — `KartState` stays lean (invariant #4). The factor is read twice/AI kart (once for skill, once for aggression); recomputing the divide rather than caching a factor array keeps it a pure, single-source function.
 
 ---
 
-## Test inventory (45)
+## Test inventory (47)
 
 - `track_3d`: spline wrap, length, frame orthonormality, ground query, even arc-length sampling; **M8**: all 3 circuits are valid orthonormal closed loops with ≥4 pads, boost-pad footprint is localized (on-pad vs off-strip vs between-pads).
-- `physics`: throttle accel, drift→blue→boost, airborne gravity, trick-on-landing boost, fixed-size particle pool; **M8**: a boost pad grants a boost when driven over (centered) but not when missed (off-strip); **M9**: a kart flung 50 m off the road recovers onto the circuit within 1 s, upright, speed scrubbed.
+- `physics`: throttle accel, drift→blue→boost, airborne gravity, trick-on-landing boost, fixed-size particle pool; **M8**: a boost pad grants a boost when driven over (centered) but not when missed (off-strip); **M9**: a kart flung 50 m off the road recovers onto the circuit within 1 s, upright, speed scrubbed; **M10**: `rubber_band` is strictly monotonic in gap and stays in `[1, 1+RUBBER_BAND_MAX]` (leader gets 1.0, far gap approaches but never exceeds the cap).
 - `mesh_gen`: box geometry counts, kart mesh index range, glyph, HSV primaries.
 - `race`: sequential lap counting, sector-skip rejected, reverse-cross rejected, standings order, countdown→release.
-- `combat`: spatial-grid neighborhood, class specs distinct, intercept-leading, aggression curve, **end-to-end fire→hash→spinout**; **M5**: mass ordering, overlapping karts separate without jitter, heavier class displaces lighter more, no tunneling at top speed; **M5.1**: draft ramps to full in <0.5 s when tucked in & decays in <0.5 s when broken (leader never drafts), no draft outside the cone/range (beside / too far / too close / ahead), a full draft gains ≥3 m over 5 s on the line.
+- `combat`: spatial-grid neighborhood, class specs distinct, intercept-leading, aggression curve, **end-to-end fire→hash→spinout**; **M5**: mass ordering, overlapping karts separate without jitter, heavier class displaces lighter more, no tunneling at top speed; **M5.1**: draft ramps to full in <0.5 s when tucked in & decays in <0.5 s when broken (leader never drafts), no draft outside the cone/range (beside / too far / too close / ahead), a full draft gains ≥3 m over 5 s on the line; **M10**: `effective_aggression` lifts a trailing kart above the same kart in the lead, is monotonic in gap for a fixed place, and never boosts the leader above bare `aggression`.
 - `game` (**M6**): full flow cycle Menu→ClassSelect→TrackSelect→Race→Results→Menu drives headlessly; selected class propagates to `combat.karts[0]` for all 4 classes; pause runs 0 substeps and freezes kart positions, resume ticks again. **M8**: each track selection builds a distinct valid circuit (>100 m, ≥4 pads) and flags the meshes stale. **M9**: hit-stop skips exactly N substeps then resumes with the fixed clock caught up (no drift); screen shake stays ≤ `SHAKE_MAX` and decays to ~0 within 0.4 s.
 - `audio` (**M7**): every one-shot is non-empty, finite, in `[-1,1]`, audibly non-silent, and exactly `n_samples(sfx_secs())` long; engine bands + drift loop are valid PCM, ascending in pitch, and **clickless** (wrap step ≤ max internal step); the WAV header declares matching RIFF/data lengths; `SfxQueue` caps at capacity (never grows/panics).
 
@@ -166,7 +168,7 @@ these as **regression gates** when adding systems (audio, more karts, hazards):
 | Metric | Budget / baseline | How to measure |
 |---|---|---|
 | 60 Hz frame budget | **16,667 µs** total (sim + render + GPU) | the math (1e6 / 60) |
-| Sim substep @ 8 karts | **~134–170 µs (≤1.0% of frame)** — baseline 141 (2026-06-20); M6 170 idle; M7 150; M8 134; M5.1 ≈ +1.5 µs; **M9 ≈ +5 µs total** (min-of-8 A/B on a noisy box: 152.4 µs with the 1.5× track vs 147.0 µs at 1.0× → the ~+5 µs is the bigger collision-grid clear; the M9 *logic* — a trauma reset + one OOB compare/kart; hit-stop/shake/prev-snap aren't on the bench path — is sub-µs). All well under the 500 µs gate | `bench_sim_substep` |
+| Sim substep @ 8 karts | **~134–170 µs (≤1.0% of frame)** — baseline 141 (2026-06-20); M6 170 idle; M7 150; M8 134; M5.1 ≈ +1.5 µs; **M9 ≈ +5 µs total**; **M10 ≈ +0** (144.5 µs, 2026-07-08 — one O(n) gap scan + two `rubber_band` divides/AI kart, all sub-µs; the minimap is render-side, off the bench path). All well under the 500 µs gate | `bench_sim_substep` |
 | Heap allocations / gameplay loop | **0** (invariant #2) | audit hot paths: no `Vec` growth / `Box` / `format!` |
 | Headless test wall time | **< 1 s** | `cargo test` |
 | Builds | **0 warnings**, debug + `--release` | `cargo build [--release]` |
@@ -179,14 +181,15 @@ new gameplay systems have ample room. **Regression rule:** a change that pushes 
 substep past ~500 µs (3% of frame) or introduces any per-tick allocation needs
 justification. Re-run the bench before/after large sim changes and record the delta.
 **`plan.md` carries a per-milestone substep-delta budget table** (M7 audio ✅ ≈+0,
-M8 tracks/pads ✅ ≈+0, M5.1 draft ✅ ≈+1.5 µs, and **M9 juice + longer laps ✅ ≈+5 µs**
-all confirmed; next: M10 minimap/rubber-band <+10 µs, M11 settings ≈+0, M12 ghost
+M8 tracks/pads ✅ ≈+0, M5.1 draft ✅ ≈+1.5 µs, **M9 juice + longer laps ✅ ≈+5 µs**, and
+**M10 minimap/rubber-band ✅ ≈+0** all confirmed; next: M11 settings ≈+0, M12 ghost
 <+10 µs) — worst-case total ~190 µs, still well under the 500 µs gate.
 
 ---
 
 ## Known tech debt / watch-list
 
+- **M10 minimap look + rubber-band feel unverified.** Headless-tested (`rubber_band` monotonic+bounded, `effective_aggression` lifts a trailing kart) but the *look/feel* needs a `cargo run --release` pass: does the top-right radar read clearly (outline + dots, player distinct), and does the field close up believably without feeling rigged? Tune `RUBBER_BAND_GAP_HALF` (bite sooner) / `RUBBER_BAND_MAX` (ceiling) in `physics.rs`. **Edge:** `gaps_into` uses the overall max `rank_key` as the leader, so once an AI *finishes* (its `rank_key` jumps to ~10 000) every remaining kart briefly reads max catch-up — harmless (the factor clamps) and late-race, but note it if the tail suddenly surges after a finisher.
 - **M9 juice + longer-lap feel unverified.** Headless-tested (respawn, hit-stop no-drift, shake bound/decay) but the *feel* — shake punch/decay, the hit-stop pause on a player spin-out, the SPUN-OUT/▲▼/FINAL-LAP HUD pops, and especially the **1.5× longer laps** (do the three circuits still drive well, and is the softened banking — ~⅔ of before — still satisfying, or should `BANK_FACTOR` rise?) — needs a `cargo run --release` pass. Now also has a draft visual hook (`combat.draft[0]`) if a HUD cue is wanted later.
 - **Draft feel unverified (M5.1).** The slipstream is headless-tested (cone/range gating, ramp/decay timing, speed gain) but the *feel* — tuck-in tow strength, the FOV swell at raised top speed, draft→pad chaining — needs a `cargo run --release` pass. Only the implicit FOV juice signals it (no dedicated HUD cue).
 - ~~No out-of-bounds respawn~~ ✅ **retired (M9):** a kart that leaves the circuit (vertical fall, or the lateral backstop) now respawns onto the nearest frame upright with scrubbed speed. Verify feel off the big hill / after a mortar AoE in the smoke test.

@@ -243,6 +243,22 @@ impl RaceDirector {
         }
     }
 
+    /// Fill `out[i]` with kart i's gap behind the current leader, in rank-key
+    /// units (1.0 = one full lap); 0 for the leader, never negative. Heap-free —
+    /// the AI passes read it each tick for M10 rubber-band catch-up. During the
+    /// countdown every kart shares ~the same key, so gaps are ~0 (no effect).
+    pub fn gaps_into(&self, out: &mut [f32]) {
+        let leader = self
+            .progress
+            .iter()
+            .map(|p| p.rank_key)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let n = self.progress.len().min(out.len());
+        for i in 0..n {
+            out[i] = (leader - self.progress[i].rank_key).max(0.0);
+        }
+    }
+
     /// Countdown banner text. Empty once the race is live.
     pub fn countdown_label(&self) -> &'static str {
         if self.phase != Phase::Countdown {
