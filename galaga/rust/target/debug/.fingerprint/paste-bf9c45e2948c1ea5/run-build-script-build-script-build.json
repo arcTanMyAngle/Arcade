@@ -1,1 +1,0 @@
-{"rustc":1562763049001146449,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[17605717126308396068,"build_script_build",false,16930731877625971673]],"local":[{"RerunIfChanged":{"output":"debug\\build\\paste-bf9c45e2948c1ea5\\output","paths":["build.rs"]}}],"rustflags":["-C","target-cpu=native"],"config":0,"compile_kind":0}

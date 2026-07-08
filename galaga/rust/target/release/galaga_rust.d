@@ -1,1 +1,0 @@
-C:\Users\bornt\Desktop\myWebby\galaga\rust\target\release\galaga_rust.exe: C:\Users\bornt\Desktop\myWebby\galaga\rust\src\entities.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\src\game.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\src\main.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\src\paths.rs C:\Users\bornt\Desktop\myWebby\galaga\rust\src\sprites.rs
