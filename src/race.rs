@@ -29,7 +29,9 @@ use crate::track_3d::TrackSpline;
 // Tunables
 // ----------------------------------------------------------------------------
 
-/// Laps required to finish the race.
+/// Default laps required to finish the race. The live target is now a
+/// [`RaceDirector::laps`] field (settable on the M11 Settings screen); this is
+/// the value a fresh director starts with.
 pub const TOTAL_LAPS: u8 = 3;
 
 /// Ordered anti-cheat sectors around the loop. Higher = finer gating (harder to
@@ -123,6 +125,9 @@ pub struct RaceDirector {
     /// Countdown-remaining counts *up* to [`COUNTDOWN_SECS`] in `Countdown`,
     /// then is reset and used as the race elapsed time in `Racing`/`Finished`.
     pub clock: f32,
+    /// Laps to finish (M11 settable). Defaults to [`TOTAL_LAPS`]; `Game` overwrites
+    /// it from the Settings screen at race start. `progress.len()` is the field size.
+    pub laps: u8,
     pub progress: Vec<RaceProgress>,
     finishers: u8,
     seg_count: f32,
@@ -134,6 +139,7 @@ impl RaceDirector {
         let mut d = Self {
             phase: Phase::Countdown,
             clock: 0.0,
+            laps: TOTAL_LAPS,
             progress: vec![RaceProgress::starting(0); karts.len()],
             finishers: 0,
             seg_count: track.segment_count() as f32,
@@ -149,6 +155,10 @@ impl RaceDirector {
         self.clock = 0.0;
         self.finishers = 0;
         self.seg_count = track.segment_count() as f32;
+        // The field size (M11) is the number of karts passed in — match `progress`
+        // to it. Within the `NUM_KARTS` capacity reserved at construction, so this
+        // never reallocates; `laps` is left untouched (set separately by `Game`).
+        self.progress.resize(karts.len(), RaceProgress::starting(0));
         for (i, k) in karts.iter().enumerate() {
             let pn = self.progress_norm(k);
             let sector = ((pn * NUM_CHECKPOINTS as f32) as u16).min(NUM_CHECKPOINTS - 1);
@@ -191,7 +201,7 @@ impl RaceDirector {
                     let pn = (k.track_u.rem_euclid(self.seg_count)) / self.seg_count;
                     if p.register(pn) {
                         p.lap += 1;
-                        if p.lap > TOTAL_LAPS {
+                        if p.lap > self.laps {
                             p.finished = true;
                             self.finishers += 1;
                             p.finish_order = self.finishers;
@@ -218,7 +228,7 @@ impl RaceDirector {
     /// Lap to display for a kart, 1-based and clamped to the race length.
     #[inline]
     pub fn display_lap(&self, kart: usize) -> u8 {
-        self.progress[kart].lap.clamp(1, TOTAL_LAPS)
+        self.progress[kart].lap.clamp(1, self.laps)
     }
 
     /// Live 1-based position of `kart`: one plus the number of karts strictly

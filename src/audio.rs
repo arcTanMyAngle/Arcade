@@ -281,6 +281,13 @@ impl AudioBank {
     pub fn adjust_master(&mut self, delta: f32) {
         self.master = (self.master + delta).clamp(0.0, 1.0);
     }
+
+    /// Set master volume outright, clamped to 0..1. `main` mirrors the M11
+    /// `Settings.master_volume` here each frame so the Settings screen (and the
+    /// `[` / `]` keys, which now drive that setting) take effect immediately.
+    pub fn set_master(&mut self, v: f32) {
+        self.master = v.clamp(0.0, 1.0);
+    }
 }
 
 // ----------------------------------------------------------------------------

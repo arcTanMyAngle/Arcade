@@ -27,7 +27,7 @@
 use macroquad::models::Mesh;
 use macroquad::prelude::*;
 
-use crate::audio::{Sfx, SfxQueue};
+use crate::audio::{Sfx, SfxQueue, MASTER_VOLUME};
 use crate::combat::{ChassisClass, Combat};
 use crate::mesh_gen::{
     build_ammo_crate_mesh, build_boost_pad_mesh, build_kart_mesh, build_projectile_meshes,
@@ -36,7 +36,7 @@ use crate::mesh_gen::{
 use crate::physics::{
     compute_ai_inputs, step_all, Input, KartState, ParticleSystem, SparkStage, FIXED_DT,
 };
-use crate::race::{Phase, RaceDirector};
+use crate::race::{Phase, RaceDirector, TOTAL_LAPS};
 use crate::track_3d::TrackSpline;
 
 // ----------------------------------------------------------------------------
@@ -80,6 +80,56 @@ pub const TRACK_ORDER: [fn() -> TrackSpline; 3] =
     [TrackSpline::demo_circuit, TrackSpline::speedway, TrackSpline::serpentine];
 pub const TRACK_NAMES: [&str; 3] = ["CIRCUIT", "SPEEDWAY", "SERPENTINE"];
 
+// --- settings (Milestone 11) ---
+/// Fewest karts a race can run (the player plus one AI). The most is [`NUM_KARTS`]
+/// — buffers are sized to that, so a smaller field simply simulates/renders fewer.
+pub const MIN_KARTS: usize = 2;
+/// Lap-target bounds for the race.
+pub const MIN_LAPS: u8 = 1;
+pub const MAX_LAPS: u8 = 9;
+/// Chase-camera base-FOV bounds (radians) + adjust step; the default matches
+/// `main::BASE_FOV`. The speed/boost swell adds on top of this at run time.
+pub const FOV_MIN: f32 = 0.75;
+pub const FOV_MAX: f32 = 1.35;
+pub const FOV_STEP: f32 = 0.05;
+pub const DEFAULT_FOV: f32 = 1.0;
+/// Master-volume adjust step, shared by the Settings screen and the `[` / `]` keys.
+pub const VOLUME_STEP: f32 = 0.05;
+/// Adjustable rows on the Settings screen, in display order:
+/// VOLUME · RACERS · LAPS · TRACK · FOV.
+pub const SETTINGS_ROWS: usize = 5;
+
+/// Session-persistent race configuration, edited on the M11 Settings screen and
+/// applied at race start. It is a plain `Copy` value — nothing here touches the
+/// gameplay loop; a smaller `active_karts` only shrinks the working sub-slices, so
+/// there is never a per-tick reallocation (buffers stay sized to [`NUM_KARTS`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Master audio volume, 0..1. `main` mirrors this into the `AudioBank` each frame.
+    pub master_volume: f32,
+    /// Karts that race (player + AI), in `MIN_KARTS..=NUM_KARTS`.
+    pub active_karts: usize,
+    /// Laps to finish, in `MIN_LAPS..=MAX_LAPS`.
+    pub lap_count: u8,
+    /// Remembered circuit (indexes [`TRACK_ORDER`]); seeds `track_cursor` when the
+    /// player enters TrackSelect, and is updated to whatever they actually race.
+    pub default_track: usize,
+    /// Chase-camera base FOV in radians; the run-time speed/boost swell adds on top.
+    pub fov: f32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            master_volume: MASTER_VOLUME,
+            active_karts: NUM_KARTS,
+            lap_count: TOTAL_LAPS,
+            default_track: 0,
+            fov: DEFAULT_FOV,
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Flow types
 // ----------------------------------------------------------------------------
@@ -93,6 +143,9 @@ pub enum GameState {
     /// Pick the circuit (overhead preview + length/pad readout). Sits between
     /// class-select and the race (M8).
     TrackSelect,
+    /// Session options: volume, field size, laps, default track, FOV (M11).
+    /// Reached from the Menu; changes persist for the session.
+    Settings,
     /// The race is live (or paused, or counting down — see [`RaceDirector`]).
     Race,
     /// The finish board; the sim is frozen behind it.
@@ -115,7 +168,8 @@ pub struct FrameInput {
     pub confirm: bool, // Enter
     pub cancel: bool,  // Esc (context-dependent: quit / back / pause / resume)
     pub restart: bool, // R
-    pub nav: i8,       // -1 / +1 class-select cursor (Left / Right)
+    pub nav: i8,       // -1 / +1 horizontal cursor / value adjust (Left / Right)
+    pub nav_v: i8,     // -1 / +1 vertical cursor (Up / Down): menu + settings rows (M11)
     pub player: Input, // driving (Race only)
 }
 
@@ -131,6 +185,16 @@ pub struct Game {
     pub state: GameState,
     pub paused: bool,
     pub class_cursor: usize,
+    /// Session options (M11), persisted across races and applied at `start_race`.
+    pub settings: Settings,
+    /// Highlighted item on the main menu: 0 = START, 1 = SETTINGS (M11).
+    pub menu_cursor: usize,
+    /// Highlighted row on the Settings screen (indexes the [`SETTINGS_ROWS`] rows).
+    pub settings_cursor: usize,
+    /// Karts actually racing this session, snapshotted from `settings.active_karts`
+    /// at `start_race` (in `MIN_KARTS..=NUM_KARTS`). The sim + render operate on the
+    /// leading `active_karts` slice of the (full-capacity) buffers — M11 field size.
+    pub active_karts: usize,
     /// Highlighted circuit on the track-select screen (indexes [`TRACK_ORDER`]).
     pub track_cursor: usize,
     /// Set when [`start_race`](Game::start_race) rebuilds `track`, so `main` knows
@@ -219,6 +283,10 @@ impl Game {
             state: GameState::Menu,
             paused: false,
             class_cursor: 0,
+            settings: Settings::default(),
+            menu_cursor: 0,
+            settings_cursor: 0,
+            active_karts: NUM_KARTS,
             track_cursor: 0,
             track_dirty: false,
             last_substeps: 0,
@@ -273,9 +341,38 @@ impl Game {
                 if fi.cancel {
                     return Flow::Quit;
                 }
+                // Two items (START / SETTINGS); either arrow axis moves between them.
+                let mv = if fi.nav_v != 0 { fi.nav_v } else { fi.nav };
+                if mv != 0 {
+                    self.menu_cursor = (self.menu_cursor as i32 + mv as i32).rem_euclid(2) as usize;
+                    self.events.push(Sfx::MenuMove);
+                }
                 if fi.confirm {
-                    self.state = GameState::ClassSelect;
+                    if self.menu_cursor == 0 {
+                        self.state = GameState::ClassSelect;
+                    } else {
+                        self.settings_cursor = 0;
+                        self.state = GameState::Settings;
+                    }
                     self.events.push(Sfx::MenuConfirm);
+                }
+            }
+            GameState::Settings => {
+                // Esc or Enter both leave (options persist on the `Game`).
+                if fi.cancel || fi.confirm {
+                    self.state = GameState::Menu;
+                    self.events.push(Sfx::MenuBack);
+                } else {
+                    if fi.nav_v != 0 {
+                        self.settings_cursor = (self.settings_cursor as i32 + fi.nav_v as i32)
+                            .rem_euclid(SETTINGS_ROWS as i32)
+                            as usize;
+                        self.events.push(Sfx::MenuMove);
+                    }
+                    if fi.nav != 0 {
+                        self.adjust_setting(self.settings_cursor, fi.nav);
+                        self.events.push(Sfx::MenuMove);
+                    }
                 }
             }
             GameState::ClassSelect => {
@@ -290,6 +387,8 @@ impl Game {
                         self.events.push(Sfx::MenuMove);
                     }
                     if fi.confirm {
+                        // Enter TrackSelect at the remembered default circuit (M11).
+                        self.track_cursor = self.settings.default_track.min(TRACK_ORDER.len() - 1);
                         self.state = GameState::TrackSelect; // pick the circuit next
                         self.events.push(Sfx::MenuConfirm);
                     }
@@ -348,6 +447,32 @@ impl Game {
         Flow::Continue
     }
 
+    // -- settings -----------------------------------------------------------
+
+    /// Adjust the settings `row` by `dir` (−1 / +1), each within its documented
+    /// range. Pure state edit — nothing here allocates or touches the sim. The
+    /// Settings screen calls this on a Left/Right press for the highlighted row.
+    fn adjust_setting(&mut self, row: usize, dir: i8) {
+        let s = &mut self.settings;
+        match row {
+            0 => s.master_volume = (s.master_volume + dir as f32 * VOLUME_STEP).clamp(0.0, 1.0),
+            1 => {
+                s.active_karts = (s.active_karts as i32 + dir as i32)
+                    .clamp(MIN_KARTS as i32, NUM_KARTS as i32) as usize
+            }
+            2 => {
+                s.lap_count = (s.lap_count as i32 + dir as i32)
+                    .clamp(MIN_LAPS as i32, MAX_LAPS as i32) as u8
+            }
+            3 => {
+                let n = TRACK_ORDER.len() as i32;
+                s.default_track = (s.default_track as i32 + dir as i32).rem_euclid(n) as usize;
+            }
+            4 => s.fov = (s.fov + dir as f32 * FOV_STEP).clamp(FOV_MIN, FOV_MAX),
+            _ => {}
+        }
+    }
+
     // -- transitions --------------------------------------------------------
 
     /// Commit the highlighted class **and circuit**, then drop into a fresh race.
@@ -360,6 +485,11 @@ impl Game {
         self.classes[0] = class;
         let (body, accent) = KART_PALETTE[0];
         self.kart_meshes[0] = build_kart_mesh(body, accent, class);
+        // Apply the session settings (M11): lock in the field size + lap target,
+        // and remember the circuit we're about to race as the new default.
+        self.active_karts = self.settings.active_karts.clamp(MIN_KARTS, NUM_KARTS);
+        self.race.laps = self.settings.lap_count.clamp(MIN_LAPS, MAX_LAPS);
+        self.settings.default_track = self.track_cursor;
         self.track = TRACK_ORDER[self.track_cursor]();
         self.track_dirty = true;
         self.combat = Combat::new(&self.track, &self.classes, NUM_AMMO_CRATES);
@@ -390,7 +520,9 @@ impl Game {
             *k = KartState::spawn(&self.track, i);
         }
         self.prev_karts.copy_from_slice(&self.karts);
-        self.race.reset(&self.track, &self.karts);
+        // The race (and thus every downstream `_into` buffer) is sized to the active
+        // field only (M11) — parked karts beyond `active_karts` never enter standings.
+        self.race.reset(&self.track, &self.karts[..self.active_karts]);
         self.accumulator = 0.0;
         self.alpha = 0.0;
         self.hitstop = 0;
@@ -408,6 +540,11 @@ impl Game {
         let mut n = 0;
         let mut skipped = 0;
         let mut first = true;
+        // Everything below operates on the leading `active_karts` slice of the
+        // (full-capacity) buffers (M11) — a smaller field just does less work; the
+        // parked tail is never read. Rayon parallelizes over the slice, so fewer
+        // karts is strictly faster (0 new allocation either way).
+        let m = self.active_karts;
 
         while self.accumulator >= FIXED_DT {
             // Drain time first so a hit-stop still advances the fixed clock.
@@ -423,9 +560,15 @@ impl Game {
 
             // Gap-behind-leader for every kart, so trailing AI get an honest
             // rubber-band lift to their driving skill and drift-farm aggression (M10).
-            self.race.gaps_into(&mut self.gaps);
+            self.race.gaps_into(&mut self.gaps[..m]);
             // AI for everyone (cheap), then stamp the player's input on slot 0.
-            compute_ai_inputs(&self.karts, &self.skills, &self.gaps, &self.track, &mut self.inputs);
+            compute_ai_inputs(
+                &self.karts[..m],
+                &self.skills[..m],
+                &self.gaps[..m],
+                &self.track,
+                &mut self.inputs[..m],
+            );
             self.inputs[0] = player;
             if !first {
                 // Edge-triggered actions fire only on the first substep of a frame.
@@ -434,31 +577,38 @@ impl Game {
             }
             // Combat AI nudges the AI karts' driving (dodge / aim / catch-up drift).
             if self.race.phase == Phase::Racing {
-                self.race.places_into(&mut self.places);
-                self.combat.plan_ai(&self.karts, &self.places, &self.gaps, &mut self.inputs);
+                self.race.places_into(&mut self.places[..m]);
+                self.combat
+                    .plan_ai(&self.karts[..m], &self.places[..m], &self.gaps[..m], &mut self.inputs[..m]);
             }
             // Freeze the grid during "3..2..1" and after the finish.
             if self.race.inputs_locked() {
-                for inp in self.inputs.iter_mut() {
+                for inp in self.inputs[..m].iter_mut() {
                     *inp = Input::default();
                 }
             }
             // A spun-out kart loses control until its stun expires.
-            for (i, inp) in self.inputs.iter_mut().enumerate() {
+            for i in 0..m {
                 if self.combat.stunned(i) {
-                    *inp = Input::default();
+                    self.inputs[i] = Input::default();
                 }
             }
 
-            self.prev_karts.copy_from_slice(&self.karts);
+            self.prev_karts[..m].copy_from_slice(&self.karts[..m]);
             // `combat.draft` carries the previous substep's slipstream factors
             // (M5.1) — a parallel array fed in like `inputs`. Disjoint fields, so
             // the borrow checker allows the `&mut karts` + `&combat.draft` overlap.
-            step_all(&mut self.karts, &self.inputs, &self.combat.draft, &self.track, FIXED_DT);
+            step_all(
+                &mut self.karts[..m],
+                &self.inputs[..m],
+                &self.combat.draft[..m],
+                &self.track,
+                FIXED_DT,
+            );
 
             // An OOB respawn inside `step_all` teleports a kart; snap its render
             // `prev` so the interpolation doesn't streak across the map (M9).
-            for i in 0..self.karts.len() {
+            for i in 0..m {
                 if self.karts[i].position.distance_squared(self.prev_karts[i].position)
                     > RESPAWN_SNAP_DIST2
                 {
@@ -469,17 +619,17 @@ impl Game {
             // Race-state diffs → audio cues (single-threaded, post-step).
             let prev_phase = self.race.phase;
             let prev_lap0 = self.race.progress[0].lap;
-            self.race.update(&self.karts, FIXED_DT);
+            self.race.update(&self.karts[..m], FIXED_DT);
             self.emit_race_audio(prev_phase, prev_lap0);
 
             let was_stunned = self.combat.stunned(0);
             self.combat.step(
-                &mut self.karts,
-                &self.inputs,
+                &mut self.karts[..m],
+                &self.inputs[..m],
                 &self.track,
                 &mut self.particles,
                 &mut self.events,
-                &self.places,
+                &self.places[..m],
                 self.race.phase == Phase::Racing,
                 FIXED_DT,
             );
@@ -502,7 +652,7 @@ impl Game {
             self.shake = (self.shake - SHAKE_DECAY * FIXED_DT).max(0.0);
 
             // Emit particles (cheap, main thread), integrate them in parallel.
-            for k in &self.karts {
+            for k in &self.karts[..m] {
                 if k.spark_stage() != SparkStage::None {
                     self.particles.emit_drift_sparks(k);
                 }
@@ -744,5 +894,134 @@ mod tests {
         assert!(!g.paused);
         g.update(&drive, FIXED_DT * 2.0);
         assert!(g.last_substeps > 0, "resumed sim must run substeps again");
+    }
+
+    /// M11 DoD: the chosen lap target and field size flow through `start_race`
+    /// into the running race, for a few combinations.
+    #[test]
+    fn settings_propagate_into_race() {
+        for &(laps, racers) in &[(1u8, 2usize), (5, 6), (MAX_LAPS, NUM_KARTS)] {
+            let mut g = Game::new();
+            g.settings.lap_count = laps;
+            g.settings.active_karts = racers;
+            g.state = GameState::TrackSelect;
+            g.start_race();
+
+            assert_eq!(g.state, GameState::Race);
+            assert_eq!(g.race.laps, laps, "chosen lap target must reach the director");
+            assert_eq!(g.active_karts, racers, "chosen field size must be locked in");
+            assert_eq!(g.race.progress.len(), racers, "only the chosen field races");
+        }
+    }
+
+    /// The Settings screen is reachable from the Menu and back, and an edit made
+    /// there survives leaving the screen (session persistence).
+    #[test]
+    fn settings_reachable_from_menu_and_back() {
+        let mut g = Game::new();
+        // Down highlights SETTINGS (item 1); Enter opens it.
+        g.update(&FrameInput { nav_v: 1, ..Default::default() }, FIXED_DT);
+        assert_eq!(g.menu_cursor, 1);
+        g.update(&FrameInput { confirm: true, ..Default::default() }, FIXED_DT);
+        assert_eq!(g.state, GameState::Settings);
+
+        // Move to the RACERS row (row 1) and nudge the field size down.
+        let before = g.settings.active_karts;
+        g.update(&FrameInput { nav_v: 1, ..Default::default() }, FIXED_DT);
+        g.update(&FrameInput { nav: -1, ..Default::default() }, FIXED_DT);
+        assert_eq!(g.settings.active_karts, before - 1);
+
+        // Esc returns to the menu; the edit persists.
+        g.update(&FrameInput { cancel: true, ..Default::default() }, FIXED_DT);
+        assert_eq!(g.state, GameState::Menu);
+        assert_eq!(g.settings.active_karts, before - 1, "settings persist for the session");
+    }
+
+    /// Value clamps hold at both ends of every adjustable row.
+    #[test]
+    fn settings_adjust_clamps_at_bounds() {
+        let mut g = Game::new();
+        // Field size: drive it far past both limits.
+        for _ in 0..20 {
+            g.adjust_setting(1, -1);
+        }
+        assert_eq!(g.settings.active_karts, MIN_KARTS);
+        for _ in 0..20 {
+            g.adjust_setting(1, 1);
+        }
+        assert_eq!(g.settings.active_karts, NUM_KARTS);
+        // Laps.
+        for _ in 0..20 {
+            g.adjust_setting(2, -1);
+        }
+        assert_eq!(g.settings.lap_count, MIN_LAPS);
+        for _ in 0..20 {
+            g.adjust_setting(2, 1);
+        }
+        assert_eq!(g.settings.lap_count, MAX_LAPS);
+        // Volume stays in [0, 1].
+        for _ in 0..40 {
+            g.adjust_setting(0, 1);
+        }
+        assert!(g.settings.master_volume <= 1.0 + 1e-6);
+        for _ in 0..40 {
+            g.adjust_setting(0, -1);
+        }
+        assert!(g.settings.master_volume >= -1e-6);
+    }
+
+    /// A smaller field really races fewer karts: standings cover exactly the field,
+    /// and a parked kart (index ≥ `active_karts`) is never simulated. Also proves
+    /// the options survive a full return-to-menu-and-race-again cycle.
+    #[test]
+    fn parked_karts_stay_out_and_options_persist() {
+        let mut g = Game::new();
+        g.settings.lap_count = 2;
+        g.settings.active_karts = 3;
+        g.state = GameState::TrackSelect;
+        g.start_race();
+
+        let parked = g.karts[5].position; // well beyond the 3-kart field
+        let drive = FrameInput {
+            player: Input { throttle: 1.0, ..Default::default() },
+            ..Default::default()
+        };
+        for _ in 0..400 {
+            g.update(&drive, FIXED_DT);
+        }
+        assert_eq!(g.race.progress.len(), 3, "standings only cover the active field");
+        assert_eq!(g.karts[5].position, parked, "a parked kart is never simulated");
+        assert!(g.race.player_position() as usize <= 3, "position can't exceed the field");
+
+        // Return to the menu and race again with no re-entry to Settings.
+        g.to_menu();
+        assert_eq!(g.settings.lap_count, 2, "options survive returning to the menu");
+        assert_eq!(g.settings.active_karts, 3);
+        g.state = GameState::TrackSelect;
+        g.start_race();
+        assert_eq!(g.race.laps, 2);
+        assert_eq!(g.race.progress.len(), 3);
+    }
+
+    /// AI weapons stay cold for the first beat after the lights go out, so the
+    /// front-row player isn't point-blank shelled at the line. Regression for the
+    /// "immediately shot as the race starts" report.
+    #[test]
+    fn ai_weapons_hold_at_the_start() {
+        let mut g = Game::new();
+        g.state = GameState::TrackSelect;
+        g.start_race();
+        // Drive off the line but never fire (player input has fire = false).
+        let drive = FrameInput {
+            player: Input { throttle: 1.0, ..Default::default() },
+            ..Default::default()
+        };
+        // Run through the 3.5 s countdown and ~0.5 s into the race.
+        for _ in 0..240 {
+            g.update(&drive, FIXED_DT);
+        }
+        assert_eq!(g.race.phase, Phase::Racing, "should be racing by now");
+        let live = g.combat.projectiles.iter().filter(|p| p.alive()).count();
+        assert_eq!(live, 0, "no AI shots should fly in the opening moments after GO");
     }
 }

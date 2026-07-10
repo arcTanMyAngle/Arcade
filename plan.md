@@ -2,19 +2,22 @@
 
 The "Combat Grand Prix" pivot (**M1–M4**), **M5** (kart-to-kart collision), **M6**
 (game-flow state machine), **M7** (procedural audio), **M8** (track variety + boost
-pads), **M5.1** (slipstream/draft), **M9** (juice & recovery + longer laps) and **M10**
-(minimap + rubber-band AI) are all **done** — see `handoff.md` for architecture and the
-completed-milestone log below. This plan covers the **remaining two milestones** (M11, M12),
-ordered by impact. Each lists scope, the files it touches, a **measurable DoD**, and a
-**benchmark gate**. Preserve the five core invariants in `handoff.md` (60 Hz fixed step,
-zero-alloc loop, rayon, lean `KartState`, procedural assets) in everything below.
+pads), **M5.1** (slipstream/draft), **M9** (juice & recovery + longer laps), **M10**
+(minimap + rubber-band AI) and **M11** (settings + race options) are all **done** — see
+`handoff.md` for architecture and the completed-milestone log below. This plan now covers
+the **one remaining milestone** (M12, best-lap ghost replay). Each entry lists scope, the
+files it touches, a **measurable DoD**, and a **benchmark gate**. Preserve the five core
+invariants in `handoff.md` (60 Hz fixed step, zero-alloc loop, rayon, lean `KartState`,
+procedural assets) in everything below.
 
 ## How "done" is judged (applies to every milestone)
 - **Tests:** each milestone adds ≥1 headless test; `cargo test` stays green and **0 warnings**.
 - **Perf gate:** sim substep stays **< 500 µs @ 8 karts** (baseline **141 µs**; M6 170 idle;
   M7 150; M8 134 µs; M5.1 draft ≈ +1.5 µs; **M9 juice + 1.5× laps ≈ +5 µs** → ~152 µs
-  min-of-8, ≤1% of the 16,667 µs frame — see handoff *Performance budget*). Re-run
-  `bench_sim_substep` before/after and record the delta. **0 new per-tick heap allocations.**
+  min-of-8; **M10 ≈ +0**, **M11 ≈ +0**, ≤1% of the 16,667 µs frame — see handoff *Performance
+  budget*). Re-run `bench_sim_substep` before/after and record the delta. ⚠️ It's a *mean*, so
+  compare an **A/B on the same machine state** (a stash-pop baseline), not against a stale
+  absolute — readings drift ~1.7× with thermal/load. **0 new per-tick heap allocations.**
 - **Builds:** `cargo build` and `cargo build --release` clean.
 - **Feel:** anything visual/audio needs a `cargo run --release` smoke test (call it out —
   no GPU window in the dev env).
@@ -27,7 +30,7 @@ Numeric targets are starting tunables, not laws — but ship with them measured 
 | ~~**M5.1 Draft**~~ ✅ | **≈ +1.5 µs** (budget < +20) | reused the grid (`for_each_within`) + a parallel `f32` array, 0 new alloc |
 | ~~**M9 Juice/Recovery**~~ ✅ | **≈ +5 µs** (budget < +15) | respawn rides the ground query; shake/feedback render-side; hit-stop = substep skip; +5 µs is the bigger grid from `LAP_SCALE` |
 | ~~**M10 Minimap/Rubber-band**~~ ✅ | **≈ +0 µs** (budget < +10) | one O(n) gap scan + two `rubber_band` divides/AI kart (sub-µs); the minimap is render-side. Substep **144.5 µs** (within noise of the M9 152) |
-| **M11 Settings** | **≈ +0 µs** | config/UI only (fewer karts only *speeds up* the substep) |
+| ~~**M11 Settings**~~ ✅ | **≈ +0 µs** | config/UI only; field size is a `[..active_karts]` sub-slice of full-capacity buffers (0 new alloc), so fewer karts only *speeds up* the substep. A/B vs the stashed pre-M11 tree read identical minima |
 | **M12 Ghost replay** | **< +10 µs** | one pose write/substep into a pre-sized ring; playback render-side |
 | **Running total** | must keep substep **< 500 µs** | currently ~134 µs → ~190 µs worst case, ample headroom |
 
@@ -80,25 +83,25 @@ the field close up without feeling rigged? `GAP_HALF`/`RUBBER_BAND_MAX` are the 
 
 ---
 
-### M11 — Settings screen + race options
-**Why:** the M6/M8 flow now has menus but nothing is configurable; the ad-hoc `[`/`]` volume
-keys want a real home. Leverages the existing front-end.
-**Scope:** a `Settings` `GameState` reachable from the Menu holding **master volume, AI field
-size, lap count, default track, FOV**, persisted in a `Settings` struct on `Game` for the
-session and applied at race start. Buffers stay sized to `MAX_KARTS = 8`; an `active_karts ≤ 8`
-field drives how many race (no per-frame realloc). `TOTAL_LAPS` becomes a settable race target.
-**Touches:** `game.rs` (`Settings` struct, `Settings` state, `active_karts`, lap target),
-`race.rs` (lap target as a field, not a const), `main.rs` (settings screen + apply volume),
-`audio.rs` (master volume set from settings).
-
-**DoD (measurable):**
-- Settings reachable from the Menu and back; volume / laps / AI-count / track **persist across
-  races within a session**.
-- A started race **honors the chosen lap count and field size** (only `active_karts` race; the
-  finish board reflects it).
-- **Headless test:** settings propagate into a started race — `race` lap target == chosen,
-  active racer count == chosen, for a couple of combinations.
-- **Benchmark:** substep delta **≈ +0 µs** (config only; fewer karts is *faster*).
+### M11 — Settings screen + race options ✅ **DONE (2026-07-08)**
+Shipped to spec. A new `Settings` `GameState` reached from a two-item Menu (START / SETTINGS,
+new `FrameInput.nav_v` Up/Down cursor) holds **master volume, field size (`active_karts`),
+lap count, default track, FOV** in a `Settings` struct on `Game` — edited in place
+(`adjust_setting`, per-row clamps), persisted for the session, applied at `start_race`. **Field
+size is a `[..active_karts]` sub-slice** of the full-capacity (`NUM_KARTS`) buffers across every
+per-tick pass (`compute_ai_inputs`/`plan_ai`/`step_all`/`combat.step`/freeze-stun-particle
+loops) — 0 new alloc, rayon over the slice, so a smaller field is *faster*; the parked tail is
+never simulated/rendered/scored. Two enabling changes: `combat.step` rebuilds the grid from
+`positions[..karts.len()]` (else a projectile could hit a stale parked kart), and
+`RaceDirector::reset` `progress.resize`s to the field (within reserved capacity → no realloc);
+`progress.len()` is then the field-size source of truth. `TOTAL_LAPS` const → `RaceDirector.laps`
+field. Volume applies live (`main` mirrors `settings.master_volume` → `AudioBank::set_master`
+each frame; `[`/`]` now edit that setting); FOV is the chase-cam base; `default_track` seeds
+TrackSelect and is updated to whatever's actually raced. 4 headless tests (→ **51**): propagation
+(lap target + field size, several combos), Menu↔Settings reachability + persistence, per-row
+clamps, and parked-kart correctness across a re-race. Substep **≈ +0 µs** (A/B vs the stashed
+pre-M11 tree, identical minima on the same machine state). **Settings screen look/feel — small
+field & short/long laps, FOV extremes, volume-bar tracking — needs a `cargo run --release` pass.**
 
 ---
 
@@ -149,10 +152,14 @@ times if needed).
 
 ## Recommended order + pending verification
 Build order: **M10 → M11 → M12** (awareness/balance, then configurability, then the replay
-flair). M5.1, M9, and **M10** are done. The remaining two fit comfortably under the 500 µs substep
-gate (see the table above). **Recommended next: M11 (settings + race options).**
+flair). M5.1, M9, **M10** and **M11** are done. Only **M12 (best-lap ghost replay)** remains, and
+it fits comfortably under the 500 µs substep gate (see the table above). **Recommended next: M12
+— then the single batched `cargo run --release` verification session for M5–M11.**
 
 **Pending human verification (one `cargo run --release` pass — no GPU/audio in the dev env):**
+- **M11 settings** — the two-item menu + Settings panel; does a **small field** (2–3 karts) and a
+  **short/long lap count** race well; do the **FOV** extremes read good; does the volume bar track
+  what you hear; do `[`/`]` and the screen agree? Knobs: `MIN_KARTS`/`MAX_LAPS`/`FOV_MIN`/`FOV_MAX`.
 - **M10 minimap + rubber-band** — does the radar read clearly (outline + dots, player distinct),
   and does the field close up believably without feeling rigged? Tune `GAP_HALF` (bite sooner) /
   `RUBBER_BAND_MAX` (ceiling) if the catch-up is too weak/strong.
@@ -177,6 +184,18 @@ gate (see the table above). **Recommended next: M11 (settings + race options).**
 ---
 
 ## Completed milestone log (reference — details in `handoff.md` + memory)
+- **M11 — Settings screen + race options** ✅ (2026-07-08): session config, applied at race start.
+  New `Settings` `GameState` off a two-item Menu (START/SETTINGS, `FrameInput.nav_v` Up/Down);
+  a `Settings` `Copy` struct on `Game` (`master_volume`/`active_karts`/`lap_count`/`default_track`/
+  `fov`) edited via `adjust_setting` (per-row clamps), persisted for the session. **Field size is a
+  `[..active_karts]` sub-slice** of the full-`NUM_KARTS` buffers on every per-tick pass (0 new alloc,
+  rayon over the slice → fewer karts is faster; parked tail never sim/rendered/scored); enabled by
+  `combat.step` gridding `positions[..karts.len()]` and `RaceDirector::reset` `progress.resize`ing to
+  the field (within reserved capacity). `TOTAL_LAPS` const → `RaceDirector.laps` field. Volume applies
+  live (`AudioBank::set_master` each frame; `[`/`]` edit the setting); FOV is the chase-cam base;
+  `default_track` seeds/absorbs the TrackSelect pick. 4 headless tests (**51 total**: propagation,
+  reachability+persistence, clamps, parked-kart-out + re-race), substep **≈ +0 µs** (A/B same-state),
+  0 new alloc. **Settings look/feel needs a `cargo run --release` pass.** Next-up: **M12**.
 - **M10 — Minimap / radar + rubber-band AI** ✅ (2026-07-08): spatial awareness + catch-up.
   **Minimap** (`main.rs`): a `Minimap` struct samples the live circuit centerline once into
   world-XZ points (rebuilt on `track_dirty`), then `project`s outline + live kart positions into

@@ -77,6 +77,12 @@ const CRATE_RESPAWN: f32 = 4.0; // seconds a crate stays empty after pickup
 
 const FIRE_RANGE: f32 = 70.0; // AI / homing target acquisition range
 
+/// Seconds after the grid releases (GO!) before **AI** weapons go hot. The player
+/// spawns front-row with the pack directly behind, so without this the whole field
+/// point-blank shells them the instant the lights go out. The player is unaffected —
+/// this only stops the AI from opening fire at the line. Ticked only while racing.
+const FIRE_ARM_DELAY: f32 = 2.0;
+
 // --- combat AI (Milestone 3) ---
 const DODGE_LOOKAHEAD: f32 = 1.0; // seconds of incoming fire the AI reacts to
 const DODGE_MISS_RADIUS: f32 = 3.4; // swerve if a bolt will pass within this
@@ -568,6 +574,9 @@ pub struct Combat {
     /// bumps (M9). Zeroed at the top of [`step`](Combat::step); `game.rs` folds it
     /// into a decaying shake. Player-relative, so distant AI combat doesn't rattle.
     pub trauma: f32,
+    /// Countdown (s) before AI weapons arm after the start; ticks down only while
+    /// racing (`active`). See [`FIRE_ARM_DELAY`].
+    fire_delay: f32,
     grid: SpatialGrid,
     positions: Vec<Vec3>, // reused snapshot for the parallel phase
     collision_scratch: Vec<u16>, // reused neighbor list for the collision pass
@@ -593,6 +602,7 @@ impl Combat {
             crates,
             draft: vec![0.0; classes.len()],
             trauma: 0.0,
+            fire_delay: FIRE_ARM_DELAY,
             grid: SpatialGrid::for_track(track, 10.0),
             positions: vec![Vec3::ZERO; classes.len()],
             collision_scratch: Vec::with_capacity(classes.len()),
@@ -613,6 +623,7 @@ impl Combat {
         for d in &mut self.draft {
             *d = 0.0;
         }
+        self.fire_delay = FIRE_ARM_DELAY;
         self.cursor = 0;
     }
 
@@ -641,12 +652,18 @@ impl Combat {
             }
         }
 
-        // 2) Snapshot positions for the read-only parallel phase.
+        // 2) Snapshot positions for the read-only parallel phase. `karts` may be a
+        //    sub-slice of the full grid (M11 field size < NUM_KARTS), so everything
+        //    downstream is driven by `karts.len()` — only the active karts enter the
+        //    grid / projectile broadphase; the parked tail is never referenced.
+        let n = karts.len();
         for (i, k) in karts.iter().enumerate() {
             self.positions[i] = k.position;
         }
 
         if active {
+            // Arm AI weapons a beat after the start (the player is never gated).
+            self.fire_delay = (self.fire_delay - dt).max(0.0);
             self.handle_firing(karts, inputs, places, particles, events);
             self.handle_pickups(dt, events);
         }
@@ -656,8 +673,8 @@ impl Combat {
         //    (disjoint fields from `projectiles`), so the closure is `Sync` and
         //    the parallel phase needs no lock — each projectile writes only its
         //    own slot.
-        self.grid.rebuild(&self.positions);
-        let positions: &[Vec3] = &self.positions;
+        self.grid.rebuild(&self.positions[..n]);
+        let positions: &[Vec3] = &self.positions[..n];
         let grid: &SpatialGrid = &self.grid;
         self.projectiles.par_iter_mut().for_each(|p| {
             if p.alive() {
@@ -704,6 +721,13 @@ impl Combat {
                     let target = self.pick_target(0, karts);
                     self.fire(0, karts, target, particles, events);
                 }
+                continue;
+            }
+
+            // AI weapons stay cold for the first beat after the start, so the pack
+            // breaks from the grid before the shooting opens (no point-blank shelling
+            // of the front-row player at the line).
+            if self.fire_delay > 0.0 {
                 continue;
             }
 
@@ -919,9 +943,17 @@ impl Combat {
             ..Projectile::dead()
         };
         match spec.kind {
+            // Mortar/Dart muzzle speeds (30 / 46) sit *below* the kart top speed
+            // (58), so a fast shooter would outrun its own shot and it'd appear to
+            // drift backwards. Inherit the shooter's velocity so every shot leaves
+            // the muzzle moving forward *relative to the kart* (honest physics — a
+            // projectile keeps the platform's momentum). The Laser (72) already
+            // exceeds top speed so it needs no boost (and staying at 72 keeps its
+            // per-tick step short enough for the contact test), and the Mine is a
+            // dropped hazard, not a launched round — both keep world-space velocity.
             ProjKind::Mortar => {
                 p.pos = muzzle;
-                p.vel = k.forward * spec.speed + k.up * spec.launch_lift;
+                p.vel = k.velocity + k.forward * spec.speed + k.up * spec.launch_lift;
             }
             ProjKind::Laser => {
                 p.pos = muzzle;
@@ -930,7 +962,7 @@ impl Combat {
             }
             ProjKind::Dart => {
                 p.pos = muzzle;
-                p.vel = k.forward * spec.speed;
+                p.vel = k.velocity + k.forward * spec.speed;
                 p.target = target;
             }
             ProjKind::Mine => {
@@ -1403,6 +1435,35 @@ mod tests {
         }
         assert!(hit, "a homing dart should reach and spin out the kart ahead");
         assert!(karts[1].speed.abs() < 1.0, "the hit should scrub the victim's speed");
+    }
+
+    /// A shot must leave the muzzle moving forward *relative to the shooter*, even
+    /// when the kart is near top speed — faster than the Dart/Mortar muzzle speed.
+    /// Regression for the "bullets drift backwards" bug (velocity wasn't inherited,
+    /// so a 58 m/s kart outran its own 46 m/s dart).
+    #[test]
+    fn projectile_outruns_a_fast_shooter() {
+        let track = TrackSpline::demo_circuit();
+        let classes = [ChassisClass::Warden, ChassisClass::Warden]; // homing Dart, speed 46
+        let mut karts: Vec<KartState> = (0..2).map(|i| KartState::spawn(&track, i)).collect();
+        // Player barreling forward near top speed (58) — well above the Dart's 46.
+        let fwd = karts[0].forward;
+        karts[0].speed = 55.0;
+        karts[0].velocity = fwd * 55.0;
+
+        let mut combat = Combat::new(&track, &classes, 0);
+        let mut particles = ParticleSystem::with_capacity(16);
+        let mut events = SfxQueue::new();
+        // Fire with no lock (NONE) so the dart flies straight — no homing curve.
+        combat.fire(0, &karts, NONE, &mut particles, &mut events);
+
+        let p = combat.projectiles.iter().find(|p| p.alive()).expect("a shot should spawn");
+        let along = p.vel.dot(fwd);
+        assert!(
+            along > karts[0].speed,
+            "the shot must pull ahead of its shooter, got {along:.1} m/s vs kart {:.1}",
+            karts[0].speed
+        );
     }
 
     #[test]

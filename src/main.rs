@@ -29,12 +29,15 @@ use macroquad::rand::gen_range;
 
 use audio::AudioBank;
 use combat::Combat;
-use game::{Flow, FrameInput, Game, GameState, CLASS_ORDER, NUM_KARTS, TRACK_NAMES, TRACK_ORDER};
+use game::{
+    Flow, FrameInput, Game, GameState, CLASS_ORDER, FOV_MAX, FOV_MIN, NUM_KARTS, SETTINGS_ROWS,
+    TRACK_NAMES, TRACK_ORDER,
+};
 use mesh_gen::{
     draw_boost_spark, draw_pixel_text, pixel_text_width, BLUE_SPARK, ORANGE_SPARK,
 };
 use physics::{interpolate, Input, KartState, RenderPose, SparkStage};
-use race::{Phase, RaceDirector, TOTAL_LAPS};
+use race::{Phase, RaceDirector};
 use shaders::Shaders;
 use track_3d::{build_track_meshes, Frame, TrackSpline};
 
@@ -157,14 +160,17 @@ async fn main() {
         }
 
         // ===================== AUDIO =====================
-        // `[` / `]` trim master volume. Then drain the frame's one-shots and drive
-        // the continuous voices (engine pitch ← speed, drift screech ← drift state).
+        // `[` / `]` trim the master-volume *setting* (the same value the M11 Settings
+        // screen edits); we then mirror it into the bank each frame so either path
+        // takes effect at once. Finally drain the one-shots and drive the continuous
+        // voices (engine pitch ← speed, drift screech ← drift state).
         if is_key_pressed(KeyCode::LeftBracket) {
-            audio.adjust_master(-0.1);
+            game.settings.master_volume = (game.settings.master_volume - game::VOLUME_STEP).max(0.0);
         }
         if is_key_pressed(KeyCode::RightBracket) {
-            audio.adjust_master(0.1);
+            game.settings.master_volume = (game.settings.master_volume + game::VOLUME_STEP).min(1.0);
         }
+        audio.set_master(game.settings.master_volume);
         audio.play_all(&game.events);
         let racing = game.state == GameState::Race && !game.paused;
         audio.update_engine(game.karts[0].speed_ratio(), racing);
@@ -195,7 +201,17 @@ async fn main() {
                 draw_world(&game, &track_meshes, &shaders, t);
 
                 set_default_camera();
-                draw_menu(t);
+                draw_menu(&game, t);
+            }
+            GameState::Settings => {
+                // Reuse the menu backdrop, then overlay the options panel (M11).
+                let cam = menu_camera(&game.track, t);
+                set_camera(&cam);
+                shaders.set_camera(cam.position);
+                draw_world(&game, &track_meshes, &shaders, t);
+
+                set_default_camera();
+                draw_settings(&game);
             }
             GameState::ClassSelect => {
                 draw_class_preview(&game, &shaders, t);
@@ -236,7 +252,8 @@ async fn main() {
                 }
 
                 let boosting = game.karts[0].is_boosting();
-                let fov = BASE_FOV
+                // Base FOV is the M11 setting; the speed/boost swell adds on top.
+                let fov = game.settings.fov
                     + game.karts[0].speed_ratio() * FOV_SPEED
                     + if boosting { FOV_BOOST } else { 0.0 };
                 let cam = Camera3D {
@@ -271,9 +288,10 @@ async fn main() {
                 }
                 draw_place_arrow(place_dir, place_flash);
 
-                // Radar (M10): hidden behind the full-screen standings board.
+                // Radar (M10): hidden behind the full-screen standings board. Only
+                // the active field is plotted (M11).
                 if game.race.phase != Phase::Finished {
-                    draw_minimap(&minimap, &game.karts);
+                    draw_minimap(&minimap, &game.karts[..game.active_karts]);
                 }
 
                 if game.paused {
@@ -295,11 +313,16 @@ async fn main() {
 /// the held driving input) into the value the state machine consumes.
 fn sample_frame_input() -> FrameInput {
     let nav = is_key_pressed(KeyCode::Right) as i8 - is_key_pressed(KeyCode::Left) as i8;
+    // Vertical menu nav (M11): Up/Down move the menu item / settings-row cursor.
+    // These share the arrow keys with driving, but driving samples `is_key_down`
+    // in `Race` only, so there's no cross-state conflict.
+    let nav_v = is_key_pressed(KeyCode::Down) as i8 - is_key_pressed(KeyCode::Up) as i8;
     FrameInput {
         confirm: is_key_pressed(KeyCode::Enter),
         cancel: is_key_pressed(KeyCode::Escape),
         restart: is_key_pressed(KeyCode::R),
         nav,
+        nav_v,
         player: sample_player_input(),
     }
 }
@@ -380,8 +403,9 @@ fn draw_world(game: &Game, track_meshes: &[Mesh], shaders: &Shaders, t: f32) {
         let m = Mat4::from_translation(p.pos) * orient_to(p.vel);
         draw_mesh_transformed(&game.proj_meshes[p.kind.index()], m);
     }
-    // A spun-out kart whirls about its up axis.
-    for i in 0..game.karts.len() {
+    // A spun-out kart whirls about its up axis. Only the active field is drawn (M11);
+    // parked karts beyond `active_karts` sit unused on the grid, never rendered.
+    for i in 0..game.active_karts {
         let pose = interpolate(&game.prev_karts[i], &game.karts[i], game.alpha);
         let model = kart_model_matrix(&pose) * Mat4::from_rotation_y(game.combat.spin_yaw(i));
         draw_mesh_transformed(&game.kart_meshes[i], model);
@@ -495,7 +519,7 @@ fn menu_camera(track: &TrackSpline, t: f32) -> Camera3D {
     Camera3D { position: eye, target: focus, up: Vec3::Y, fovy: BASE_FOV, ..Default::default() }
 }
 
-fn draw_menu(t: f32) {
+fn draw_menu(game: &Game, t: f32) {
     let w = screen_width();
     let h = screen_height();
 
@@ -510,17 +534,103 @@ fn draw_menu(t: f32) {
     let sw = pixel_text_width(sub, ss);
     draw_pixel_text(sub, (w - sw) * 0.5, 212.0, ss, ORANGE_SPARK);
 
-    // Pulsing call to action.
-    let a = 0.5 + 0.5 * (t * 3.0).sin();
-    let prompt = "PRESS ENTER TO START";
-    let ps = 5.0;
-    let pw = pixel_text_width(prompt, ps);
-    draw_pixel_text(prompt, (w - pw) * 0.5, h * 0.62, ps, Color::new(1.0, 1.0, 1.0, a));
+    // Two-item menu (M11): START / SETTINGS. The highlighted item pulses gold with
+    // a caret; the other is dimmed. `menu_cursor` is the flow's selection.
+    let items = ["START", "SETTINGS"];
+    let ms = 6.0;
+    let pulse = 0.55 + 0.45 * (t * 3.0).sin();
+    let mut y = h * 0.55;
+    for (i, label) in items.iter().enumerate() {
+        let selected = i == game.menu_cursor;
+        let color = if selected {
+            Color::new(1.0, 0.9, 0.35, pulse)
+        } else {
+            Color::new(1.0, 1.0, 1.0, 0.5)
+        };
+        let lw = pixel_text_width(label, ms);
+        if selected {
+            draw_pixel_text(">", (w - lw) * 0.5 - 42.0, y, ms, color);
+        }
+        draw_pixel_text(label, (w - lw) * 0.5, y, ms, color);
+        y += 64.0;
+    }
 
-    let quit = "ESC  QUIT";
+    let hint = "UP / DOWN  SELECT      ENTER  CONFIRM      ESC  QUIT";
     let qs = 3.0;
-    let qw = pixel_text_width(quit, qs);
-    draw_pixel_text(quit, (w - qw) * 0.5, h - 60.0, qs, Color::new(1.0, 1.0, 1.0, 0.7));
+    let qw = pixel_text_width(hint, qs);
+    draw_pixel_text(hint, (w - qw) * 0.5, h - 60.0, qs, Color::new(1.0, 1.0, 1.0, 0.7));
+}
+
+/// The Settings screen (M11): a titled panel of adjustable rows over the menu
+/// backdrop. Up/Down move the row cursor; Left/Right change the highlighted value.
+/// Everything it edits lives in `game.settings` and persists for the session.
+fn draw_settings(game: &Game) {
+    let w = screen_width();
+    let h = screen_height();
+    draw_rectangle(0.0, 0.0, w, h, Color::new(0.0, 0.0, 0.0, 0.45));
+
+    let title = "SETTINGS";
+    let ts = 9.0;
+    let tw = pixel_text_width(title, ts);
+    draw_pixel_text(title, (w - tw) * 0.5, 60.0, ts, WHITE);
+
+    let s = &game.settings;
+    let panel_w = 560.0;
+    let x = (w - panel_w) * 0.5;
+    let row_h = 62.0;
+    let top = 172.0;
+    let lab_s = 4.0;
+    let val_s = 4.0;
+    let bar_x = x + panel_w - 260.0;
+    let bar_w = 210.0;
+    let labels = ["VOLUME", "RACERS", "LAPS", "TRACK", "FOV"];
+
+    for row in 0..SETTINGS_ROWS {
+        let y = top + row as f32 * row_h;
+        let selected = row == game.settings_cursor;
+        if selected {
+            draw_rectangle(x - 18.0, y - 16.0, panel_w + 36.0, 44.0, Color::new(1.0, 1.0, 1.0, 0.10));
+            draw_pixel_text("<", bar_x - 34.0, y, val_s, Color::new(1.0, 0.9, 0.35, 1.0));
+            draw_pixel_text(">", bar_x + bar_w + 60.0, y, val_s, Color::new(1.0, 0.9, 0.35, 1.0));
+        }
+        let lab_c = if selected {
+            Color::new(1.0, 0.9, 0.35, 1.0)
+        } else {
+            Color::new(0.85, 0.85, 0.9, 1.0)
+        };
+        draw_pixel_text(labels[row], x, y, lab_s, lab_c);
+
+        match row {
+            0 => {
+                draw_setting_bar(bar_x, y, bar_w, s.master_volume, Color::new(0.2, 0.9, 0.4, 0.9));
+                draw_uint((s.master_volume * 100.0).round() as u32, bar_x + bar_w + 90.0, y, val_s, WHITE);
+            }
+            1 => {
+                draw_uint(s.active_karts as u32, bar_x, y, val_s, WHITE);
+                draw_pixel_text("/", bar_x + 60.0, y, val_s, Color::new(0.7, 0.7, 0.75, 1.0));
+                draw_uint(NUM_KARTS as u32, bar_x + 96.0, y, val_s, Color::new(0.7, 0.7, 0.75, 1.0));
+            }
+            2 => draw_uint(s.lap_count as u32, bar_x, y, val_s, WHITE),
+            3 => draw_pixel_text(TRACK_NAMES[s.default_track], bar_x, y, val_s, Color::new(0.30, 0.90, 1.00, 1.0)),
+            _ => {
+                let frac = (s.fov - FOV_MIN) / (FOV_MAX - FOV_MIN);
+                draw_setting_bar(bar_x, y, bar_w, frac, Color::new(0.9, 0.6, 0.2, 0.9));
+                let deg = (s.fov * 180.0 / std::f32::consts::PI).round() as u32;
+                draw_uint(deg, bar_x + bar_w + 90.0, y, val_s, WHITE);
+            }
+        }
+    }
+
+    let hint = "UP / DOWN  ROW      LEFT / RIGHT  ADJUST      ESC  BACK";
+    let hs = 3.0;
+    let hw = pixel_text_width(hint, hs);
+    draw_pixel_text(hint, (w - hw) * 0.5, h - 48.0, hs, Color::new(1.0, 1.0, 1.0, 0.85));
+}
+
+/// A settings-row value bar: dark track + a colored fill for `frac` in [0, 1].
+fn draw_setting_bar(x: f32, y: f32, w: f32, frac: f32, fill: Color) {
+    draw_rectangle(x, y - 4.0, w, 18.0, Color::new(0.0, 0.0, 0.0, 0.5));
+    draw_rectangle(x, y - 4.0, w * frac.clamp(0.0, 1.0), 18.0, fill);
 }
 
 /// The 3D half of class-select: a spinning preview of the highlighted chassis,
@@ -876,16 +986,16 @@ fn draw_race_hud(race: &RaceDirector, t: f32) {
         draw_pixel_text("LAP", cx - 96.0, 24.0, 4.0, WHITE);
         draw_uint(race.display_lap(0) as u32, cx - 12.0, 24.0, 4.0, WHITE);
         draw_pixel_text("/", cx + 16.0, 24.0, 4.0, WHITE);
-        draw_uint(TOTAL_LAPS as u32, cx + 40.0, 24.0, 4.0, WHITE);
+        draw_uint(race.laps as u32, cx + 40.0, 24.0, 4.0, WHITE);
 
         draw_pixel_text("POS", cx - 96.0, 66.0, 4.0, ORANGE_SPARK);
         draw_uint(race.player_position() as u32, cx - 12.0, 66.0, 4.0, ORANGE_SPARK);
         draw_pixel_text("/", cx + 16.0, 66.0, 4.0, ORANGE_SPARK);
-        draw_uint(NUM_KARTS as u32, cx + 40.0, 66.0, 4.0, ORANGE_SPARK);
+        draw_uint(race.progress.len() as u32, cx + 40.0, 66.0, 4.0, ORANGE_SPARK);
     }
 
     // Final-lap flash (M9): a pulsing banner once the player starts the last lap.
-    if race.phase == Phase::Racing && race.display_lap(0) == TOTAL_LAPS {
+    if race.phase == Phase::Racing && race.display_lap(0) == race.laps {
         let a = 0.55 + 0.45 * (t * 6.0).sin();
         let label = "FINAL LAP";
         let s = 6.0;
@@ -909,11 +1019,13 @@ fn draw_standings_board(race: &RaceDirector) {
 
     let mut order = [0u8; NUM_KARTS];
     race.standings_into(&mut order);
+    // Only the karts that actually raced fill valid slots (M11 field size).
+    let field = race.progress.len();
 
     let row_h = 46.0;
     let top = 180.0;
     let s = 5.0;
-    for (place, &ki) in order.iter().enumerate() {
+    for (place, &ki) in order.iter().take(field).enumerate() {
         let y = top + place as f32 * row_h;
         let is_player = ki == 0;
         let color = if is_player {
