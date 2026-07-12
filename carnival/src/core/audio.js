@@ -5,7 +5,7 @@ let ctx = null, ambientGain = null, sfxGain = null, noiseBuf = null, ambientNode
 
 // per-booth ambience: [lowpass Hz, bed gain, drone Hz] — each booth "wrong" in its own way
 const PROFILES = {
-  shooting: [380, 0.22, 52], highstriker: [300, 0.20, 43], dart: [420, 0.20, 61],
+  shooting: [380, 0.22, 52], anchor: [320, 0.20, 41], dart: [420, 0.20, 61],
   ringtoss: [350, 0.22, 49], basketball: [440, 0.24, 70], skee: [500, 0.24, 82]
 };
 
@@ -150,19 +150,56 @@ function vSwish(dst, t) { // clean make: soft net hiss (band-passed noise, quick
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.32, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
   n.connect(bp).connect(g).connect(dst); n.start(t); n.stop(t + 0.28);
 }
+function vScrape(dst, t) { // ring grinding on a peg: gritty band-passed noise, brief sustain
+  const n = ctx.createBufferSource(); n.buffer = noiseBuf; n.loop = true;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 4;
+  bp.frequency.setValueAtTime(1600, t); bp.frequency.exponentialRampToValueAtTime(900, t + 0.15); // downward grind
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  n.connect(bp).connect(g).connect(dst); n.start(t); n.stop(t + 0.18);
+}
+function vTick(dst, t) { // metronome: 2 ms dry click (band-passed noise transient)
+  const n = ctx.createBufferSource(); n.buffer = noiseBuf;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 3;
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+  n.connect(bp).connect(g).connect(dst); n.start(t); n.stop(t + 0.02);
+}
+function vSlam(dst, t) { // anchor impact: sub-sine body 55→28 Hz + noise crack + long inharmonic ring
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(55, t); o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+  const g = ctx.createGain(); env(g, t, 1.0, 0.55); o.connect(g).connect(dst); o.start(t); o.stop(t + 0.6);
+  const n = ctx.createBufferSource(); n.buffer = noiseBuf;                         // metal crack transient
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1600;
+  const ng = ctx.createGain(); env(ng, t, 0.7, 0.06); n.connect(hp).connect(ng).connect(dst); n.start(t); n.stop(t + 0.07);
+  [1, 2.71, 5.13, 8.4].forEach((m, i) => {                                        // 1.2 s inharmonic anvil ring
+    const p = ctx.createOscillator(); p.type = 'triangle'; p.frequency.value = 190 * m;
+    const pg = ctx.createGain(); env(pg, t, 0.28 / (i + 1), 1.2 - i * 0.18); p.connect(pg).connect(dst); p.start(t); p.stop(t + 1.3);
+  });
+}
+function vCrowd(dst, t) { // 3 band-passed noise swells, 1.4 s slow rise (uneasy cheer through the muffled bed)
+  [520, 900, 1500].forEach((fq, i) => {
+    const n = ctx.createBufferSource(); n.buffer = noiseBuf; n.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = fq; bp.Q.value = 1.6;
+    const g = ctx.createGain(); const t0 = t + i * 0.12;
+    g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.16 / (i + 1), t0 + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.4);
+    n.connect(bp).connect(g).connect(dst); n.start(t0); n.stop(t0 + 1.5);
+  });
+}
 const VOICES = {
   crack: vCrack, ping: vPing, whistle: vWhistle, thock: vThock, thud: vThud, ding: vDing,
-  whoosh: vWhoosh, pop: vPop, breath: vBreath, clack: vClack, swish: vSwish, murmur: vMurmur
+  whoosh: vWhoosh, pop: vPop, breath: vBreath, clack: vClack, swish: vSwish, murmur: vMurmur,
+  scrape: vScrape, tick: vTick, slam: vSlam, crowd: vCrowd
 };
 
 export const audio = {
   resume() { ensure(); if (ctx.state === 'suspended') ctx.resume(); },
   ambient(on) { ensure(); ambientGain.gain.value = on ? 0.22 : 0.0; if (droneGain) droneGain.gain.value = on ? 0.05 : 0.0; },
-  // retune the muffled bed + dread drone per booth
+  // retune the muffled bed + dread drone per booth — ramped (setTargetAtTime) so the transition slurs
   ambientProfile(name) {
-    ensure(); const p = PROFILES[name] || PROFILES.shooting;
-    lp.frequency.value = p[0]; ambientGain.gain.value = p[1];
-    if (drone) { drone.frequency.value = p[2]; drone._d2.frequency.value = p[2] * 1.5; }
+    ensure(); const p = PROFILES[name] || PROFILES.shooting, t = ctx.currentTime;
+    lp.frequency.setTargetAtTime(p[0], t, 0.4); ambientGain.gain.setTargetAtTime(p[1], t, 0.4);
+    if (drone) { drone.frequency.setTargetAtTime(p[2], t, 0.4); drone._d2.frequency.setTargetAtTime(p[2] * 1.5, t, 0.4); }
   },
   // Update HRTF listener. Pass plain {x,y,z} camera position and forward direction.
   listener(pos, fwd) {

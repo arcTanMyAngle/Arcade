@@ -10,7 +10,8 @@ export const hud = {
       reticle: $('reticle'), banner: $('banner'), bTitle: $('bTitle'), bBody: $('bBody'), bBack: $('bBack'),
       timeRow: $('hTimeRow'), countRow: $('hCountRow'), count: $('hCount'), countLabel: $('hCountLabel'),
       striker: $('striker'), chgFill: $('chgFill'), chgSweet: $('chgSweet'),
-      scope: $('scope'), breathWrap: $('breathWrap'), breath: $('breath')
+      scope: $('scope'), breathWrap: $('breathWrap'), breath: $('breath'),
+      tickets: $('hTickets'), toasts: $('toasts'), ribbon: $('ribbon'), rhythm: $('rhythm')
     };
   },
   show(on) { this.el.root.style.display = on ? 'block' : 'none'; if (!on) this.clearBanner(); },
@@ -55,5 +56,26 @@ export const hud = {
     this.el.banner.style.display = 'block';
     this.el.bBack.onclick = onBack;
   },
-  clearBanner() { this.el.banner.style.display = 'none'; }
+  clearBanner() { this.el.banner.style.display = 'none'; },
+  // --- M11 kinetic surfaces ---
+  tickets(n) { if (this.el.tickets) this.el.tickets.textContent = n | 0; },
+  toast(title, sub) { // queued self-removing card, CSS-animated
+    const t = this.el.toasts; if (!t) return;
+    const e = document.createElement('div'); e.className = 'toast';
+    e.innerHTML = `<b>${title}</b>${sub ? `<span>${sub}</span>` : ''}`;
+    t.appendChild(e); setTimeout(() => e.remove(), 2500);
+  },
+  ribbon(x0, y0, x1, y1) { // drag vector as a rotated 1px neon div; ribbon(null) hides
+    const el = this.el.ribbon; if (!el) return;
+    if (x0 == null) { el.style.display = 'none'; return; }
+    const dx = x1 - x0, dy = y1 - y0;                     // screen-px drag vector → length + angle
+    el.style.display = 'block'; el.style.left = x0 + 'px'; el.style.top = y0 + 'px';
+    el.style.width = Math.hypot(dx, dy) + 'px'; el.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+  },
+  rhythm(seq, idx, hot) { // key-glyph beat lane (Anchor); seq=null hides
+    const el = this.el.rhythm; if (!el) return;
+    if (!seq) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = 'flex';
+    el.innerHTML = seq.map((g, i) => `<span class="beat${i < idx ? ' done' : ''}${i === idx ? (hot ? ' cur hot' : ' cur') : ''}">${g}</span>`).join('');
+  }
 };

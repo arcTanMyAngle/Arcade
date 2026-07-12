@@ -28,7 +28,7 @@ Applies to `Arcade/carnival/` only. Root `Arcade/` is a separate Rust kart proje
 
 ## Code conventions
 - ES modules. `physics.js` imports nothing (node-testable). `three` only where rendering.
-- Games export `{ init(ctx), update(dt,input,alpha), teardown() }`. `ctx` = shared core handles.
+- Games export `create(ctx)` → `{ step(dt), render(alpha), teardown() }`. `ctx` = shared core handles.
 - Pool projectiles; instance repeated props; reuse scratch vectors; dispose on teardown.
 - Perf budget: 60fps, no per-frame heap growth.
 

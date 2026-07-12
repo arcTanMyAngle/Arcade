@@ -72,19 +72,49 @@ export function bounce(v, n, e, muk) {
   return v;
 }
 
-// --- High-striker rail model (Level 2) ------------------------------------
-// Impulsive 1-D contact: mallet head (mass mH, speed sH) strikes a resting puck (mass mP)
-// with pad restitution e. Momentum + restitution on a stationary target gives the puck's
-// launch speed up the rail:  Δv = (1+e)·mH/(mH+mP)·sH.
-export function railImpulse(sH, mH, mP, e) {
-  return (1 + e) * (mH / (mH + mP)) * sH;
+// --- Anchor Smash hammer-track model (Level 2, replaces the High-Striker rail) -------------
+// A driven hammer (mass mH) is released down a vertical track of length H with an initial
+// downward speed vf (from the wrist flick). The spun-up flywheel dumps its stored energy E as
+// a constant drive force over the run, gravity adds mgH, and Coulomb friction removes μ·mgH:
+//   ½·mH·vImp² = ½·mH·vf² + mH·g·H·(1−μ) + E   →   vImp = √( vf² + 2·(g(1−μ) + E/(mH·H))·H ).
+// Pure closed form; the booth's descent animation integrates the same constant accel a = g(1−μ)+E/(mH·H).
+export const H_TRACK = 3.2;
+export function trackImpact(vf, E, mH, H, mu, g = 9.81) {
+  return Math.sqrt(vf * vf + 2 * (g * (1 - mu) + E / (mH * H)) * H);
 }
 
-// Peak height of a body launched up a rail at v0 against gravity g plus Coulomb rail friction
-// modeled as a constant opposing decel μ·g:  a = -(g + μg)  ->  H = v0² / (2·(g + μg)).
-// Closed form of the semi-implicit rise integration (matched within a step in tests).
-export function railApex(v0, g = -G.y, mu = 0) {
-  return (v0 * v0) / (2 * (g + mu * g));
+// --- Plinker hinged knock-down plate (Level 1) ----------------------------
+// A plate = rigid rod hinged at its base (mass m, height H), standing upright (θ=0). A bullet
+// strikes it at height h above the hinge carrying linear momentum J = mB·|v|; the angular impulse
+// J·h about the hinge, divided by the rod's end-inertia I = m·H²/3, sets the plate's spin:
+//   ω = J·h / (m·H²/3).
+export function hingeKick(J, h, m, H) {
+  return (J * h) / (m * H * H / 3);
+}
+
+// Bistable plate integrator. A base detent (torsion spring, stiffness HINGE_K [N·m/rad]) rights the
+// plate for leans below the break-over angle HINGE_TIP; past it, gravity's toppling torque about
+// the hinge, α = (3g/2H)·sinθ, takes over and it falls flat (θ ≥ π/2 = knocked down, dead). Both the
+// detent term (α = −3·HINGE_K·θ/(m·H²) = τ/I) and the topple term are true angular accelerations, so
+// a heavier / taller plate resists more. st = {th, om}; damp = angular drag (1/s). Returns true on fall.
+export const HINGE_TIP = 0.45, HINGE_K = 0.85;
+export function hingeStep(st, m, H, damp, dt, g = -G.y) {
+  const a = st.th >= HINGE_TIP
+    ? (3 * g / (2 * H)) * Math.sin(st.th)            // gravity topples past break-over
+    : -(3 * HINGE_K / (m * H * H)) * st.th;          // detent rights it below break-over
+  st.om += a * dt; st.om -= st.om * damp * dt;
+  st.th += st.om * dt;
+  if (st.th < 0) { st.th = 0; st.om = -st.om * 0.35; }   // backstop: can't lean past upright
+  if (st.th >= Math.PI / 2) { st.th = Math.PI / 2; st.om = 0; return true; }
+  return false;
+}
+
+// --- Dart aerodynamic pitch-over (Level 3) --------------------------------
+// A thrown dart's long axis φ (pitch angle in its plane of motion) rights toward the velocity angle
+// θv via first-order aero torque: dφ/dt = kA·|v|·sin(θv − φ). Small kA (cheap darts) lags, so on a
+// slow lob the tip trails the descending velocity — a physical fishtail, not cosmetic.
+export function aeroPitch(phi, thV, speed, kA, dt) {
+  return phi + kA * speed * Math.sin(thV - phi) * dt;
 }
 
 // --- Ring Toss rigid-torus solver (Level 4) -------------------------------
@@ -128,6 +158,17 @@ function pegContact(nx, ny, nz, peg, r, o) {
 function planeContact(nx, ny, nz, bd, r, o) {
   const sd = (nx - bd.ox) * bd.nx + (ny - bd.oy) * bd.ny + (nz - bd.oz) * bd.nz;
   const pen = r - sd; return pen > 0 ? { pen, n: set(o, bd.nx, bd.ny, bd.nz) } : null;
+}
+
+// Early ring resolution (Level 4 pacing) — decide the instant a thrown ring is UNAMBIGUOUSLY
+// captured so the game needn't idle to the sleep latch / timeout. Pure; peg = nearest peg. Returns
+// 'ringer' when the ring is encircling the shaft, sitting below the peg top, and essentially stopped
+// (total speed guards a still-descending ring); '' means keep simulating (settle/miss via stepRing).
+export function ringSettle(b, peg, Ri, pegH, sp = 0.35) {
+  const speed = Math.hypot(b.v.x, b.v.y, b.v.z);
+  const dAxis = Math.hypot(b.p.x - peg.bx, b.p.z - peg.bz);
+  if (dAxis < peg.pR + Ri * 0.7 && b.p.y < peg.by + pegH && speed < sp) return 'ringer';
+  return '';
 }
 
 // Advance a rigid ring one step against a peg + board, with adaptive micro-substeps so a

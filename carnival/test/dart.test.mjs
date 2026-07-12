@@ -1,7 +1,7 @@
 // Level 3 Balloon Dart — ballistic closed form, swept thin-hitbox boundary, determinism.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { v3, copy, integrate, sweptPointSphere, lerpSeg, G } from '../src/core/physics.js';
+import { v3, copy, integrate, sweptPointSphere, lerpSeg, aeroPitch, G } from '../src/core/physics.js';
 
 const near = (a, b, eps = 1e-2) => assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
 
@@ -48,4 +48,24 @@ test('deterministic flight: identical throw -> identical impact', () => {
     return 'none';
   };
   assert.equal(run(), run());
+});
+
+test('aeroPitch converges to the velocity angle; larger kA converges faster', () => {
+  const thV = 0.6, sp = 8, dt = 1 / 60;
+  let phi = 0; for (let i = 0; i < 300; i++) phi = aeroPitch(phi, thV, sp, 4, dt);
+  near(phi, thV, 1e-3);                                   // orientation rights to the flight angle
+  let a = 0, b = 0;                                       // equal short time, kA=2 vs kA=6
+  for (let i = 0; i < 20; i++) { a = aeroPitch(a, thV, sp, 2, dt); b = aeroPitch(b, thV, sp, 6, dt); }
+  assert.ok(Math.abs(thV - b) < Math.abs(thV - a), 'stiffer aero righting converges faster');
+});
+
+test('tip lag shifts the swept-tip endpoint (fishtail changes the pop test)', () => {
+  const L = 0.17, p = v3(0, 2, -12);                      // dart center, heading −z, descending
+  const tipY = (phi) => p.y + L * Math.sin(phi), tipZ = (phi) => p.z - L * Math.cos(phi); // tip = p + L·(0,sinφ,−cosφ)
+  const thV = -0.5;                                       // velocity 0.5 rad below horizontal
+  const yAligned = tipY(thV), yLag = tipY(-0.1);          // a lagging φ still points flatter
+  assert.ok(Math.abs(yLag - yAligned) > 1e-3, 'endpoint shifted by the lag');
+  assert.ok(yLag > yAligned, 'the flatter (lagging) tip rides higher than the descending-aligned tip');
+  const rB = 0.05, c = v3(0, yLag, tipZ(-0.1));           // a balloon sitting on the lagging tip
+  assert.ok(Math.hypot(0, yAligned - c.y, tipZ(thV) - c.z) > rB, 'the aligned tip would have missed it');
 });

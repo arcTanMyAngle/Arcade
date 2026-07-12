@@ -2,7 +2,8 @@
 // determinism. Drives the pure stepRing() from physics.js (no three).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { v3, len, qapply, qIntegrate, stepRing } from '../src/core/physics.js';
+import { v3, len, qapply, qIntegrate, stepRing, ringSettle } from '../src/core/physics.js';
+import { flickToLaunch } from '../src/core/kinetics.js';
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
 const PEG = { bx: 0, by: 0, bz: 0, pR: 0.017, pH: 0.5 };
@@ -49,4 +50,23 @@ test('deterministic: identical launch -> identical final pose', () => {
     return [rg.p.x, rg.p.y, rg.p.z, rg.q.x, rg.q.y, rg.q.z, rg.q.w].map((n) => n.toFixed(6)).join(',');
   };
   assert.equal(hash(), hash());
+});
+
+test('flickToLaunch (ring cfg): clamps + monotone, azimuth bounded', () => {
+  const cfg = { k: 2.2, vMin: 2.0, vMax: 4.6, azK: 0.6, azMax: 0.35 };
+  near(flickToLaunch(0, 0, cfg, {}).v0, 2.0);            // tiny flick → vMin
+  near(flickToLaunch(9, 9, cfg, {}).v0, 4.6);            // huge flick → clamps at vMax
+  const a = flickToLaunch(0, 0.5, cfg, {}), b = flickToLaunch(0, 1.2, cfg, {});
+  assert.ok(b.v0 >= a.v0);                               // monotone in flick magnitude
+  const az = flickToLaunch(3, 0, cfg, {}).az;            // azimuth clamped to ±azMax
+  assert.ok(az <= 0.35 + 1e-9 && az >= -0.35);
+});
+
+test('ringSettle: encircling + low + stopped ⇒ ringer immediately; else keep simulating', () => {
+  const peg = { bx: 0, by: 0.9, bz: -0.9, pR: 0.03 }, Ri = 0.075, pegH = 0.22;
+  const at = (p, v) => ({ p, v });
+  assert.equal(ringSettle(at({ x: 0, y: 0.95, z: -0.9 }, { x: 0, y: 0, z: 0 }), peg, Ri, pegH), 'ringer'); // captured
+  assert.equal(ringSettle(at({ x: 0, y: 0.95, z: -0.9 }, { x: 0, y: -2, z: 0 }), peg, Ri, pegH), '');       // still dropping
+  assert.equal(ringSettle(at({ x: 0.4, y: 0.95, z: -0.9 }, { x: 0, y: 0, z: 0 }), peg, Ri, pegH), '');      // off to the side
+  assert.equal(ringSettle(at({ x: 0, y: 1.5, z: -0.9 }, { x: 0, y: 0, z: 0 }), peg, Ri, pegH), '');         // hovering above the top
 });

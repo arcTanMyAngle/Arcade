@@ -70,9 +70,10 @@ export function makeEngine(mount) {
   }
 
   let active = null; // current game module { step(dt), render(alpha), teardown() }
+  let input = null;  // kinetic input; snap() folds one InputFrame per substep before the game reads it
 
   const loop = makeLoop(
-    (dt) => { if (active) active.step(dt); },
+    (dt) => { input?.snap(); if (active) active.step(dt); },
     (alpha) => {
       if (active) active.render?.(alpha);
       updateAtmosphere();                                // flickering fluorescents
@@ -93,6 +94,7 @@ export function makeEngine(mount) {
   return {
     THREE, renderer, scene, camera,
     setActive(g) { active = g; },
+    attachInput(i) { input = i; },
     clearScene() {
       // dispose everything the previous game added (avoid GPU leaks between booths)
       for (let i = scene.children.length - 1; i >= 0; i--) {

@@ -46,6 +46,27 @@
     #hud .combo { color:var(--neon2); }
     #hud .wind { position:absolute; top:56px; left:16px; font-size:12px; color:#8fd; }
     #hCountRow { display:none; }
+    /* --- M11: tickets, toasts, drag ribbon, rhythm lane --- */
+    #hTicketsRow { position:absolute; top:88px; left:16px; font-size:12px; letter-spacing:.15em; color:#ffd24d;
+      text-shadow:0 0 8px rgba(255,210,77,.5); }
+    #hTickets { color:#fff2c0; }
+    #toasts { position:absolute; top:14px; left:50%; transform:translateX(-50%); display:flex;
+      flex-direction:column; align-items:center; gap:6px; }
+    .toast { background:rgba(8,17,13,.92); border:1px solid var(--neon2); padding:8px 16px; text-align:center;
+      letter-spacing:.14em; box-shadow:0 0 16px rgba(255,47,176,.4); animation:toast 2.5s ease-out forwards; }
+    .toast b { display:block; color:var(--neon2); font-size:13px; }
+    .toast span { display:block; font-size:10px; color:#8fd; margin-top:2px; }
+    @keyframes toast { 0%{opacity:0;transform:translateY(-8px)} 8%{opacity:1;transform:none}
+      82%{opacity:1} 100%{opacity:0;transform:translateY(-6px)} }
+    #ribbon { position:absolute; left:0; top:0; height:1px; transform-origin:0 50%; display:none;
+      background:linear-gradient(90deg,rgba(57,255,136,0),var(--neon));
+      box-shadow:0 0 10px var(--neon); pointer-events:none; }
+    #rhythm { position:absolute; left:50%; bottom:64px; transform:translateX(-50%); display:none; gap:10px; }
+    #rhythm .beat { width:38px; height:38px; line-height:38px; text-align:center; font-size:18px;
+      border:1px solid #14503a; background:#08110d; color:#3a6a55; letter-spacing:0; }
+    #rhythm .beat.done { color:#0a6b47; border-color:#0a6b47; }
+    #rhythm .beat.cur { color:var(--neon); border-color:var(--neon); box-shadow:0 0 12px var(--neon); }
+    #rhythm .beat.hot { background:var(--neon); color:#021; box-shadow:0 0 20px #fff,0 0 32px var(--neon); }
     /* --- Level 3 scope vignette + breath meter --- */
     #scope { position:absolute; inset:0; display:none; pointer-events:none;
       background:radial-gradient(circle at center, transparent 30%, rgba(0,0,0,.55) 44%, #000 60%); }
@@ -104,7 +125,11 @@
       <div>BOOTH <span id="hGame">—</span> · T<span id="hTier">1</span></div>
       <div class="score">SCORE <span id="hScore">0</span></div>
     </div>
+    <div id="hTicketsRow">TICKETS <span id="hTickets">0</span></div>
     <div class="wind" id="hWind"></div>
+    <div id="toasts"></div>
+    <div id="ribbon"></div>
+    <div id="rhythm"></div>
     <div class="tr">
       <div id="hTimeRow">TIME <span id="hTime">0</span></div>
       <div id="hCountRow"><span id="hCountLabel">SWINGS</span> <span id="hCount">0</span></div>
