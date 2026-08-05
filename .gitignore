@@ -37,3 +37,9 @@ desktop.ini
 # ---- Scratch / logs ----------------------------------------
 run_stderr.txt
 *.log
+
+# fps build/capture scratch
+.dist-cap-*/
+dist/
+shots/
+node_modules/
