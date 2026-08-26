@@ -5,6 +5,8 @@ import { createCollider } from '../src/world/collision.js';
 import { rayVsVerticalCapsule, zoneForT, stepFSM, createAgentState } from '../src/ai/logic.js';
 import { createAgentBody, disposeSharedBodyAssets, AGENT_R, AGENT_H } from '../src/ai/body.js';
 import { PATTERN, W } from '../src/weapons/tuning.js';
+import { createLevel } from '../src/world/level.js';
+import { mulberry32 } from '../src/core/rng.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -74,4 +76,77 @@ test('living agent anatomy stays inside the tested hit capsule', () => {
 test('rifle cadence and recoil pattern remain finite and authored', () => {
   assert.equal(W.shotDt, 0.08); assert.equal(PATTERN.length, W.capacity);
   for (const p of PATTERN) assert.ok(Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[1] > 0);
+});
+
+// ---- world sealing -------------------------------------------------------
+// The north gateway used to open onto 4 m of asphalt and then nothing, so a
+// player looking through it saw the sky dome below the horizon: measured
+// min-luma 0, the only crushed region in any frame. The general invariant that
+// prevents any recurrence of that class of bug is that the play space is a
+// closed box from every standing eye: no ray with a non-positive vertical
+// component may leave the level. Rays that rise are fine — sky above the
+// horizon is sky, and that is what it should look like.
+//
+// The real level is built here, not a stand-in, because the bug was in the real
+// level's authored brushes. Only `mats` is stubbed; it is pure lookup.
+const stubMats = {
+  get: () => new THREE.MeshStandardMaterial(),
+  tileOf: () => 2,
+  env: null,
+  sunDir: new THREE.Vector3(0.34, 0.62, 0.41).normalize(),
+};
+
+function buildLevel() {
+  return createLevel({ scene: new THREE.Scene(), rng: mulberry32(0xB12ACE), mats: stubMats });
+}
+
+test('no standing sightline escapes the level below the horizon', () => {
+  const level = buildLevel();
+  const EYE = 1.58, R = 0.34, HH = 1.72;
+
+  // Feet positions, deliberately off round coordinates so no ray grazes a brush
+  // face at exactly 0 penetration — grazing hits are a numerical coin flip and
+  // would make this test flaky rather than strict.
+  const feet = [];
+  for (let x = -28.3; x <= 28.4; x += 4.1) for (let z = -24.3; z <= 24.4; z += 4.1) feet.push(V(x, 0, z));
+  for (let z = -25.4; z >= -34.2; z -= 1.6) for (const x of [-3.7, -0.3, 3.4]) feet.push(V(x, 0, z));
+  for (let x = -29.1; x <= -19.6; x += 1.9) feet.push(V(x, 3.37, -4.03));   // west catwalk
+
+  const AZ = 64, PITCH = [0, -0.03, -0.09, -0.2, -0.45];
+  const escapes = [];
+  let cast = 0;
+
+  for (const f of feet) {
+    // Skip positions the collider would push out of — those are inside geometry
+    // and no player can stand there.
+    const c = level.collide(f.clone(), R, HH);
+    if (Math.hypot(c.pos.x - f.x, c.pos.z - f.z) > 1e-3) continue;
+    const e = V(f.x, f.y + EYE, f.z);
+    for (let a = 0; a < AZ; a++) {
+      const th = (a / AZ) * Math.PI * 2;
+      for (const p of PITCH) {
+        const d = V(Math.cos(p) * Math.sin(th), Math.sin(p), Math.cos(p) * Math.cos(th));
+        cast++;
+        if (!level.raycast(e, d, 260) && escapes.length < 8) {
+          escapes.push(`eye(${e.x.toFixed(1)},${e.y.toFixed(2)},${e.z.toFixed(1)}) az=${th.toFixed(2)} pitch=${p}`);
+        }
+      }
+    }
+  }
+
+  assert.ok(cast > 40000, `sweep too sparse to mean anything: ${cast} rays`);
+  assert.deepEqual(escapes, [], `${escapes.length} sightline(s) left the world`);
+  level.dispose();
+});
+
+// The cheap way to "seal" the world is to brick up the gateway. That would pass
+// the sweep above and delete a traversable 9 m portal, so pin the portal open:
+// the axial sightline must still reach the sally port's far bulkhead.
+test('the north gateway stays open onto the sally port', () => {
+  const level = buildLevel();
+  const h = level.raycast(V(0, 1.58, -10), V(0, 0, -1), 260);
+  assert.ok(h, 'axial gate ray hit nothing');
+  assert.ok(h.dist > 20, `gateway is blocked at ${h.dist.toFixed(2)} m — expected the bulkhead at ~24.8 m`);
+  assert.equal(h.mat, 'concreteWall');
+  level.dispose();
 });

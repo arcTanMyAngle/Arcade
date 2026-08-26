@@ -73,7 +73,17 @@ try {
   // Game signals readiness once shaders are compiled + first frame presented.
   // NB: waitForFunction is (fn, arg, options) — options MUST be the 3rd param.
   // SwiftShader needs generous headroom; procedural texture gen is CPU-bound.
-  await page.waitForFunction(() => window.__GAME__?.ready === true, null, { timeout: 180000 });
+  // A boot failure surfaces here as a bare ready-timeout. Dump what the page said
+  // first — otherwise "Timeout 180000ms exceeded" hides the actual exception.
+  try {
+    await page.waitForFunction(() => window.__GAME__?.ready === true, null, { timeout: 180000 });
+  } catch (e) {
+    await mkdir(OUT, { recursive: true });
+    await writeFile(path.join(OUT, 'console.log'), logs.join('\n'));
+    const body = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '');
+    console.error('[capture] game never became ready. page said:\n' + body + '\n--- console ---\n' + logs.join('\n'));
+    throw e;
+  }
 
   for (const name of SHOTS) {
     const ok = await page.evaluate((n) => window.__GAME__.pose(n), name);

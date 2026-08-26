@@ -211,9 +211,17 @@ export async function createMaterialLibrary({ renderer, rng }) {
       roughness: 1,                    // scalar multiplies the map — keep at 1
       metalness: extra.metalness ?? 1, // ditto; non-metal maps carry b=0
       aoMapIntensity: 1,
-      // >1 because the PMREM sky is our only indirect-specular AND indirect-diffuse
-      // source; at 1.0 the shadow side of every object reads as dead black.
-      envMapIntensity: 1.7,
+      // three adds getIBLIrradiance() (this PMREM env, scaled PI * envMapIntensity)
+      // INTO the same `irradiance` accumulator hemisphere-light fill lands in
+      // (lights_fragment_maps.glsl + lights_fragment_begin.glsl) — envMapIntensity
+      // was pushed to 1.7 to fix shadow-side black-crush without realizing it was
+      // stacking a second, MORE saturated sky term (zenith B:R ~8.8:1 vs the
+      // hemisphere sky's own tint) on top of the hemisphere light at PI x the
+      // multiplier. That double-counted, PI-amplified blue is the shadowed-trim
+      // colour-cast root cause. Fill now lives in the hemisphere/bounce lights
+      // (lighting.js) where it can be colour-balanced directly; this only needs to
+      // cover indirect SPECULAR sheen, so it drops close to the physical default.
+      envMapIntensity: 1.0,
       normalScale: new THREE.Vector2(1, 1),
       dithering: true,
       ...extra,
