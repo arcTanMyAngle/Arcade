@@ -75,6 +75,19 @@ const GROUND_WINDOW: usize = 12; // LUT samples scanned for projectile ground te
 const CRATE_RADIUS: f32 = 2.2; // pickup radius
 const CRATE_RESPAWN: f32 = 4.0; // seconds a crate stays empty after pickup
 
+// --- items (Season 2, M13) ---
+const ITEM_BOX_COUNT: usize = 8;   // "?" boxes placed per lap
+const ITEM_BOX_RADIUS: f32 = 2.4;  // pickup radius (generous so it feels grabby)
+const ITEM_BOX_RESPAWN: f32 = 5.0; // seconds a box stays empty after pickup
+const STAR_DURATION: f32 = 6.0;    // star invincibility + boost window
+const MUSHROOM_BOOST_DUR: f32 = 1.2; // mushroom speed surge (reuses boost_time)
+const GREEN_SHELL_SPEED: f32 = 42.0;
+const RED_SHELL_SPEED: f32 = 40.0;
+const SHELL_LIFE: f32 = 10.0;
+const BANANA_LIFE: f32 = 22.0; // a dropped banana lingers for a while
+const SHELL_RIDE_HEIGHT: f32 = 0.5; // shells float a touch above the road
+const SHELL_BOUNCES: u8 = 6;
+
 const FIRE_RANGE: f32 = 70.0; // AI / homing target acquisition range
 
 /// Seconds after the grid releases (GO!) before **AI** weapons go hot. The player
@@ -211,6 +224,77 @@ impl ChassisClass {
 }
 
 // ----------------------------------------------------------------------------
+// Items (Season 2, M13) — the Mario-Kart "?"-box layer, parallel to the cannons
+// ----------------------------------------------------------------------------
+
+/// One carried item. `None` is the empty slot. The 5 kinds map to distinct
+/// behaviors in [`Combat::use_item`]: shells/bananas ride the projectile pool,
+/// mushroom/star are instant self-buffs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemKind {
+    None,
+    Mushroom,
+    Banana,
+    GreenShell,
+    RedShell,
+    Star,
+}
+
+impl ItemKind {
+    #[inline]
+    pub fn is_some(self) -> bool {
+        self != ItemKind::None
+    }
+
+    /// Short label for the HUD item slot.
+    pub fn name(self) -> &'static str {
+        match self {
+            ItemKind::None => "",
+            ItemKind::Mushroom => "MUSHROOM",
+            ItemKind::Banana => "BANANA",
+            ItemKind::GreenShell => "GREEN SHELL",
+            ItemKind::RedShell => "RED SHELL",
+            ItemKind::Star => "STAR",
+        }
+    }
+
+    /// Signature color for the HUD + drop meshes.
+    pub fn color(self) -> Color {
+        match self {
+            ItemKind::None => WHITE,
+            ItemKind::Mushroom => Color::new(0.90, 0.15, 0.15, 1.0),
+            ItemKind::Banana => Color::new(0.95, 0.85, 0.20, 1.0),
+            ItemKind::GreenShell => Color::new(0.30, 0.90, 0.35, 1.0),
+            ItemKind::RedShell => Color::new(0.95, 0.25, 0.20, 1.0),
+            ItemKind::Star => Color::new(1.00, 0.95, 0.40, 1.0),
+        }
+    }
+}
+
+/// Deterministic xorshift32 for the item roulette. Lives as a `u32` on `Combat`
+/// (no heap, no `macroquad::rand` — fully headless-testable). Returns the rolled
+/// item and the advanced state. Weighting: banana/green-shell common, mushroom
+/// mid, red-shell rare, star rarest.
+fn roll_item(mut state: u32) -> (ItemKind, u32) {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    let r = state as f32 / u32::MAX as f32; // [0, 1)
+    let kind = if r < 0.25 {
+        ItemKind::Banana
+    } else if r < 0.50 {
+        ItemKind::GreenShell
+    } else if r < 0.70 {
+        ItemKind::Mushroom
+    } else if r < 0.85 {
+        ItemKind::RedShell
+    } else {
+        ItemKind::Star
+    };
+    (kind, state)
+}
+
+// ----------------------------------------------------------------------------
 // Per-kart combat state (parallel array — keeps KartState lean & Copy)
 // ----------------------------------------------------------------------------
 
@@ -221,6 +305,8 @@ pub struct KartCombat {
     pub reload: f32,     // seconds until the cannon is ready again
     pub spin: f32,       // spin-out (stun) timer; > 0 means out of control
     pub spin_angle: f32, // accumulated spin-out yaw, for the renderer
+    pub held: ItemKind,  // the one carried item (None = empty) — M13
+    pub star_time: f32,  // star invincibility timer; > 0 = star-powered — M13
 }
 
 impl KartCombat {
@@ -231,6 +317,8 @@ impl KartCombat {
             reload: 0.0,
             spin: 0.0,
             spin_angle: 0.0,
+            held: ItemKind::None,
+            star_time: 0.0,
         }
     }
 
@@ -258,6 +346,21 @@ impl AmmoCrate {
     }
 }
 
+/// A floating "?" item box (M13): drive through it while holding nothing to roll
+/// a random item. `cooldown` counts down after a pickup before it returns.
+#[derive(Clone, Copy)]
+pub struct ItemBox {
+    pub pos: Vec3,
+    pub cooldown: f32,
+}
+
+impl ItemBox {
+    #[inline]
+    pub fn available(&self) -> bool {
+        self.cooldown <= 0.0
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Projectiles
 // ----------------------------------------------------------------------------
@@ -268,6 +371,9 @@ pub enum ProjKind {
     Laser,
     Dart,
     Mine,
+    Banana,     // M13 item hazard
+    GreenShell, // M13 item shell
+    RedShell,   // M13 homing shell
 }
 
 impl ProjKind {
@@ -279,6 +385,9 @@ impl ProjKind {
             ProjKind::Laser => 1,
             ProjKind::Dart => 2,
             ProjKind::Mine => 3,
+            ProjKind::Banana => 4,
+            ProjKind::GreenShell => 5,
+            ProjKind::RedShell => 6,
         }
     }
 
@@ -289,10 +398,15 @@ impl ProjKind {
             ProjKind::Laser => "LASER",
             ProjKind::Dart => "DART",
             ProjKind::Mine => "MINE",
+            ProjKind::Banana => "BANANA",
+            ProjKind::GreenShell => "GREEN SHELL",
+            ProjKind::RedShell => "RED SHELL",
         }
     }
 
     /// The firing sound for this cannon — each class has its own timbre.
+    /// (Item projectiles are never fired via the cannon path; they map to the
+    /// generic item-launch whoosh for exhaustiveness.)
     #[inline]
     pub fn fire_sfx(self) -> Sfx {
         match self {
@@ -300,6 +414,7 @@ impl ProjKind {
             ProjKind::Laser => Sfx::FireLaser,
             ProjKind::Dart => Sfx::FireDart,
             ProjKind::Mine => Sfx::FireMine,
+            ProjKind::Banana | ProjKind::GreenShell | ProjKind::RedShell => Sfx::ItemLaunch,
         }
     }
 }
@@ -417,6 +532,33 @@ impl Projectile {
                 self.pos = g.center + g.right * g.lateral.clamp(-ROAD_HALF_WIDTH, ROAD_HALF_WIDTH)
                     + g.normal * 0.3;
             }
+            ProjKind::Banana => {
+                // Settle onto the road and sit there — a spinning hazard. The
+                // generic contact test below makes it single-hit (life = 0 on hit).
+                let g = track.ground_query_hint(self.pos, self.track_u, GROUND_WINDOW);
+                self.track_u = g.u;
+                self.pos = g.center + g.right * g.lateral.clamp(-ROAD_HALF_WIDTH, ROAD_HALF_WIDTH)
+                    + g.normal * 0.3;
+                self.vel = Vec3::ZERO;
+            }
+            ProjKind::GreenShell => {
+                shell_ride(self, dt, track);
+            }
+            ProjKind::RedShell => {
+                // Home onto the locked kart ahead (like the dart), but ride the
+                // road and ricochet off the walls (like the green shell).
+                if self.target != NONE {
+                    let tgt = positions[self.target as usize];
+                    let to = tgt - self.pos;
+                    if to.length_squared() > 1e-4 {
+                        let speed = self.vel.length().max(1e-3);
+                        let desired = to.normalize() * speed;
+                        self.vel = self.vel.lerp(desired, (3.5 * dt).min(1.0));
+                        self.vel = self.vel.normalize() * speed;
+                    }
+                }
+                shell_ride(self, dt, track);
+            }
         }
 
         // Proximity / contact test against karts via the spatial hash. Mines
@@ -446,6 +588,33 @@ impl Projectile {
             }
         }
     }
+}
+
+/// Ride a shell along the road: advance, ricochet off the curb walls, and
+/// re-seat onto the (possibly banked) surface so it skims the deck. Shared by the
+/// green (straight) and red (homing) shells — the homing steering is applied
+/// first by the caller.
+fn shell_ride(p: &mut Projectile, dt: f32, track: &TrackSpline) {
+    p.pos += p.vel * dt;
+    let g = track.ground_query_hint(p.pos, p.track_u, GROUND_WINDOW);
+    p.track_u = g.u;
+    let limit = ROAD_HALF_WIDTH - 0.3;
+    let mut lateral = g.lateral;
+    if lateral.abs() > limit {
+        let vn = p.vel.dot(g.right);
+        p.vel -= g.right * (2.0 * vn);
+        lateral = lateral.clamp(-limit, limit);
+        if p.bounces == 0 {
+            p.life = 0.0;
+        } else {
+            p.bounces -= 1;
+        }
+    }
+    let tangential = p.vel - g.normal * p.vel.dot(g.normal);
+    if tangential.length_squared() > 1e-4 {
+        p.vel = tangential.normalize() * p.vel.length();
+    }
+    p.pos = g.center + g.right * lateral + g.normal * SHELL_RIDE_HEIGHT;
 }
 
 // ----------------------------------------------------------------------------
@@ -566,6 +735,7 @@ pub struct Combat {
     pub karts: Vec<KartCombat>, // parallel to the KartState slice
     pub projectiles: Vec<Projectile>,
     pub crates: Vec<AmmoCrate>,
+    pub item_boxes: Vec<ItemBox>, // "?" boxes that roll items (M13)
     /// Per-kart slipstream factor in `0..1` (M5.1), parallel to `karts`. Computed
     /// at the end of [`step`](Combat::step) from this tick's positions and consumed
     /// by next tick's `physics::step_all` (one-substep latency, like `places`).
@@ -577,6 +747,7 @@ pub struct Combat {
     /// Countdown (s) before AI weapons arm after the start; ticks down only while
     /// racing (`active`). See [`FIRE_ARM_DELAY`].
     fire_delay: f32,
+    rng_state: u32, // item-roulette seed (deterministic, headless-testable)
     grid: SpatialGrid,
     positions: Vec<Vec3>, // reused snapshot for the parallel phase
     collision_scratch: Vec<u16>, // reused neighbor list for the collision pass
@@ -596,13 +767,25 @@ impl Combat {
             })
             .collect();
 
+        // Item boxes (M13): like crates, but offset half a spacing so the two
+        // pickup families interleave rather than overlap.
+        let item_boxes = (0..ITEM_BOX_COUNT)
+            .map(|n| {
+                let d = track.total_length() * (n as f32 + 0.5) / ITEM_BOX_COUNT as f32;
+                let f = track.frame_at_distance(d);
+                ItemBox { pos: f.position + f.up * 1.6, cooldown: 0.0 }
+            })
+            .collect();
+
         Self {
             karts,
             projectiles: vec![Projectile::dead(); PROJECTILE_CAPACITY],
             crates,
+            item_boxes,
             draft: vec![0.0; classes.len()],
             trauma: 0.0,
             fire_delay: FIRE_ARM_DELAY,
+            rng_state: 0x1BAD_F00D,
             grid: SpatialGrid::for_track(track, 10.0),
             positions: vec![Vec3::ZERO; classes.len()],
             collision_scratch: Vec::with_capacity(classes.len()),
@@ -619,6 +802,9 @@ impl Combat {
         }
         for c in &mut self.crates {
             c.cooldown = 0.0;
+        }
+        for b in &mut self.item_boxes {
+            b.cooldown = 0.0;
         }
         for d in &mut self.draft {
             *d = 0.0;
@@ -646,6 +832,7 @@ impl Combat {
         // 1) Tick down per-kart timers; advance the spin-out animation.
         for kc in &mut self.karts {
             kc.reload = (kc.reload - dt).max(0.0);
+            kc.star_time = (kc.star_time - dt).max(0.0);
             if kc.spin > 0.0 {
                 kc.spin = (kc.spin - dt).max(0.0);
                 kc.spin_angle += SPIN_RATE * dt;
@@ -666,6 +853,8 @@ impl Combat {
             self.fire_delay = (self.fire_delay - dt).max(0.0);
             self.handle_firing(karts, inputs, places, particles, events);
             self.handle_pickups(dt, events);
+            self.handle_item_pickups(dt, events);
+            self.handle_item_use(karts, inputs, particles, events);
         }
 
         // 3) Rebuild the grid (single-threaded), then integrate + detect across
@@ -971,6 +1160,9 @@ impl Combat {
                 p.vel = -k.up;
                 p.arm = 0.5;
             }
+            // Item projectiles are never launched via the cannon path — they're
+            // spawned directly by `spawn_item` with fully-built state.
+            ProjKind::Banana | ProjKind::GreenShell | ProjKind::RedShell => {}
         }
 
         self.spawn(p);
@@ -1035,6 +1227,206 @@ impl Combat {
         }
     }
 
+    // -- items (Season 2, M13) ---------------------------------------------
+
+    /// Roll an item for every kart that drives through an available item box
+    /// while holding nothing. Mirrors the ammo-crate pass: an O(boxes × karts)
+    /// scan over the same reused positions snapshot — zero new alloc.
+    fn handle_item_pickups(&mut self, dt: f32, events: &mut SfxQueue) {
+        let Combat { item_boxes, karts, positions, rng_state, .. } = &mut *self;
+        let r2 = ITEM_BOX_RADIUS * ITEM_BOX_RADIUS;
+        for b in item_boxes.iter_mut() {
+            if b.cooldown > 0.0 {
+                b.cooldown -= dt;
+                continue;
+            }
+            for (i, kc) in karts.iter_mut().enumerate() {
+                if kc.held != ItemKind::None {
+                    continue; // only grab a box when the item slot is empty
+                }
+                if positions[i].distance_squared(b.pos) <= r2 {
+                    let (item, next) = roll_item(*rng_state);
+                    *rng_state = next;
+                    kc.held = item;
+                    b.cooldown = ITEM_BOX_RESPAWN;
+                    if i == 0 {
+                        events.push(Sfx::ItemRoll); // only the player hears their roll
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Use held items: the player on the edge-triggered item key, the AI on
+    /// simple opportunistic rules. Decides first (immutable reads), then applies
+    /// — so `use_item` can take `&mut self` without a live shared borrow.
+    fn handle_item_use(
+        &mut self,
+        karts: &mut [KartState],
+        inputs: &[Input],
+        particles: &mut ParticleSystem,
+        events: &mut SfxQueue,
+    ) {
+        // Player (slot 0): the item key is edge-triggered and cleared after the
+        // first substep of a frame (see game.rs), so this fires exactly once.
+        if inputs[0].use_item && self.karts[0].held != ItemKind::None {
+            self.use_item(0, karts, particles, events);
+        }
+
+        for i in 1..karts.len() {
+            let use_it = {
+                let kc = &self.karts[i];
+                if kc.held == ItemKind::None || kc.stunned() {
+                    false
+                } else {
+                    match kc.held {
+                        ItemKind::Mushroom => {
+                            karts[i].grounded
+                                && !karts[i].is_boosting()
+                                && karts[i].speed < 50.0
+                        }
+                        ItemKind::Banana => self.someone_behind(i, karts),
+                        ItemKind::GreenShell => self.someone_ahead(i, karts),
+                        ItemKind::RedShell => self.someone_ahead(i, karts),
+                        ItemKind::Star => self.threat_steer(i, karts).abs() > 0.02,
+                        ItemKind::None => false,
+                    }
+                }
+            };
+            if use_it {
+                self.use_item(i, karts, particles, events);
+            }
+        }
+    }
+
+    /// Spend kart `i`'s held item. All effects are instant or ride the projectile
+    /// pool — no allocation, and `KartState` itself stays untouched except the
+    /// boost timer (which is already the engine's speed-buff channel).
+    fn use_item(
+        &mut self,
+        i: usize,
+        karts: &mut [KartState],
+        particles: &mut ParticleSystem,
+        events: &mut SfxQueue,
+    ) {
+        let held = self.karts[i].held;
+        self.karts[i].held = ItemKind::None;
+        match held {
+            ItemKind::Mushroom => {
+                karts[i].boost_time = karts[i].boost_time.max(MUSHROOM_BOOST_DUR);
+                particles.emit_exhaust(&karts[i]);
+                events.push(Sfx::Boost);
+            }
+            ItemKind::Banana => {
+                let pos = karts[i].position - karts[i].forward * 1.9 + karts[i].up * 0.4;
+                let track_u = karts[i].track_u;
+                self.spawn_item(ItemKind::Banana, i, track_u, pos, NONE, Vec3::ZERO);
+                events.push(Sfx::ItemLaunch);
+            }
+            ItemKind::GreenShell => {
+                let muzzle = karts[i].position + karts[i].forward * 1.7 + karts[i].up * 0.6;
+                let track_u = karts[i].track_u;
+                let vel = karts[i].forward * GREEN_SHELL_SPEED;
+                self.spawn_item(ItemKind::GreenShell, i, track_u, muzzle, NONE, vel);
+                events.push(Sfx::ItemLaunch);
+            }
+            ItemKind::RedShell => {
+                let muzzle = karts[i].position + karts[i].forward * 1.7 + karts[i].up * 0.6;
+                let track_u = karts[i].track_u;
+                let target = self.pick_target(i, karts);
+                let vel = karts[i].forward * RED_SHELL_SPEED;
+                self.spawn_item(ItemKind::RedShell, i, track_u, muzzle, target, vel);
+                events.push(Sfx::ItemLaunch);
+            }
+            ItemKind::Star => {
+                // Invincibility (star_time) + a long speed surge (reuses boost_time,
+                // so the camera juice, BOOST banner and exhaust all fire for free).
+                self.karts[i].star_time = STAR_DURATION;
+                karts[i].boost_time = karts[i].boost_time.max(STAR_DURATION);
+                particles.emit_exhaust(&karts[i]);
+                events.push(Sfx::Star);
+            }
+            ItemKind::None => {}
+        }
+    }
+
+    /// Spawn an item projectile into the shared ring pool (shells/banana).
+    fn spawn_item(
+        &mut self,
+        kind: ItemKind,
+        owner: usize,
+        track_u: f32,
+        pos: Vec3,
+        target: u16,
+        vel: Vec3,
+    ) {
+        let p = match kind {
+            ItemKind::Banana => Projectile {
+                kind: ProjKind::Banana,
+                owner: owner as u16,
+                target: NONE,
+                life: BANANA_LIFE,
+                track_u,
+                blast: 0.0,
+                pos,
+                vel,
+                ..Projectile::dead()
+            },
+            ItemKind::GreenShell => Projectile {
+                kind: ProjKind::GreenShell,
+                owner: owner as u16,
+                target: NONE,
+                life: SHELL_LIFE,
+                track_u,
+                blast: 0.0,
+                bounces: SHELL_BOUNCES,
+                pos,
+                vel,
+                ..Projectile::dead()
+            },
+            ItemKind::RedShell => Projectile {
+                kind: ProjKind::RedShell,
+                owner: owner as u16,
+                target,
+                life: SHELL_LIFE,
+                track_u,
+                blast: 0.0,
+                bounces: SHELL_BOUNCES,
+                pos,
+                vel,
+                ..Projectile::dead()
+            },
+            _ => return, // Mushroom / Star / None have no projectile
+        };
+        self.spawn(p);
+    }
+
+    /// True when another kart sits directly behind `i` within drop range — a
+    /// banana is only worth it when someone is about to run it over.
+    fn someone_behind(&self, i: usize, karts: &[KartState]) -> bool {
+        let me = &karts[i];
+        for (j, o) in karts.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            let to = o.position - me.position;
+            if to.dot(me.forward) >= 0.0 {
+                continue; // must be behind us
+            }
+            if to.length_squared() <= MINE_REAR_RANGE * MINE_REAR_RANGE {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True when another kart is ahead of `i` within firing range — a shell has
+    /// a target to chase.
+    fn someone_ahead(&self, i: usize, karts: &[KartState]) -> bool {
+        self.pick_target(i, karts) != NONE
+    }
+
     fn apply_hits(
         &mut self,
         karts: &mut [KartState],
@@ -1061,8 +1453,9 @@ impl Combat {
                         continue;
                     }
                     if pos.distance_squared(p.pos) <= br2 {
-                        spinout(combat_karts, karts, j);
-                        player_caught |= j == 0;
+                        if spinout(combat_karts, karts, j) {
+                            player_caught |= j == 0;
+                        }
                     }
                 }
                 particles.emit_explosion(p.pos, color, 3.0);
@@ -1073,12 +1466,13 @@ impl Combat {
                 }
             } else if hit {
                 let victim = p.pending_hit as usize;
-                spinout(combat_karts, karts, victim);
-                particles.emit_explosion(p.pos, color, 1.2);
-                events.push(Sfx::Explosion);
-                *trauma += shake_falloff(player_pos.distance(p.pos)) * TRAUMA_HIT;
-                if victim == 0 {
-                    events.push(Sfx::Spinout);
+                if spinout(combat_karts, karts, victim) {
+                    particles.emit_explosion(p.pos, color, 1.2);
+                    events.push(Sfx::Explosion);
+                    *trauma += shake_falloff(player_pos.distance(p.pos)) * TRAUMA_HIT;
+                    if victim == 0 {
+                        events.push(Sfx::Spinout);
+                    }
                 }
             }
 
@@ -1294,10 +1688,16 @@ fn scrub_side_speed(k: &mut KartState, normal: Vec3, severity: f32) {
 }
 
 /// Knock a kart out of control: kill most of its speed and start the stun timer.
-fn spinout(combat_karts: &mut [KartCombat], karts: &mut [KartState], i: usize) {
+/// Star-powered karts are invincible and shrug the hit off entirely (M13); the
+/// return value reports whether the kart actually spun out.
+fn spinout(combat_karts: &mut [KartCombat], karts: &mut [KartState], i: usize) -> bool {
+    if combat_karts[i].star_time > 0.0 {
+        return false;
+    }
     karts[i].speed *= HIT_SPEED_KEEP;
     karts[i].velocity *= HIT_SPEED_KEEP;
     combat_karts[i].spin = SPIN_DURATION;
+    true
 }
 
 /// Linear shake falloff (M9): 1 at the player's feet → 0 at `SHAKE_RADIUS`.
@@ -1807,5 +2207,139 @@ mod tests {
              ({:.2}% of the {budget_us:.0} us 60Hz frame budget)",
             per_us / budget_us * 100.0
         );
+    }
+
+    // --- items (Season 2, M13) --------------------------------------------
+
+    #[test]
+    fn item_roulette_is_deterministic_and_reaches_all_items() {
+        let mut state = 0x1234_5678u32;
+        let mut counts = [0usize; 5];
+        for _ in 0..1000 {
+            let (item, next) = roll_item(state);
+            state = next;
+            let idx = match item {
+                ItemKind::Banana => 0,
+                ItemKind::GreenShell => 1,
+                ItemKind::Mushroom => 2,
+                ItemKind::RedShell => 3,
+                ItemKind::Star => 4,
+                ItemKind::None => panic!("roulette must never roll an empty slot"),
+            };
+            counts[idx] += 1;
+        }
+        assert!(counts.iter().all(|&c| c > 0), "roulette should reach every item: {counts:?}");
+
+        let (a, _) = roll_item(0x1234_5678);
+        let (b, _) = roll_item(0x1234_5678);
+        assert_eq!(a, b, "same seed must yield the same first roll");
+    }
+
+    #[test]
+    fn item_box_grants_one_item_and_goes_on_cooldown() {
+        let track = TrackSpline::demo_circuit();
+        let classes = [ChassisClass::Warden, ChassisClass::Warden];
+        let mut karts: Vec<KartState> = (0..2).map(|i| KartState::spawn(&track, i)).collect();
+        let mut combat = Combat::new(&track, &classes, 0);
+        let box0 = combat.item_boxes[0].pos;
+        karts[0].position = box0; // park the player right on the box
+
+        let mut particles = ParticleSystem::with_capacity(64);
+        let inputs = vec![Input::default(); 2];
+        let places = [1u8, 2u8];
+        let mut events = SfxQueue::new();
+
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        assert_ne!(combat.karts[0].held, ItemKind::None, "a box should grant an item");
+        assert!(combat.item_boxes[0].cooldown > 0.0, "a picked box goes on cooldown");
+
+        // Holding an item, a second box must not overwrite the slot.
+        let held = combat.karts[0].held;
+        karts[0].position = combat.item_boxes[1].pos;
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        assert_eq!(combat.karts[0].held, held, "a held item blocks further pickups");
+    }
+
+    #[test]
+    fn mushroom_grants_a_boost_on_use() {
+        let track = TrackSpline::demo_circuit();
+        let classes = [ChassisClass::Warden];
+        let mut karts: Vec<KartState> = (0..1).map(|i| KartState::spawn(&track, i)).collect();
+        let mut combat = Combat::new(&track, &classes, 0);
+        combat.karts[0].held = ItemKind::Mushroom;
+
+        let mut inputs = vec![Input::default(); 1];
+        inputs[0].use_item = true;
+        let places = [1u8];
+        let mut particles = ParticleSystem::with_capacity(64);
+        let mut events = SfxQueue::new();
+
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        assert!(karts[0].is_boosting(), "a mushroom should grant a boost");
+        assert_eq!(combat.karts[0].held, ItemKind::None, "the item is consumed on use");
+    }
+
+    #[test]
+    fn banana_spins_out_the_first_kart_to_touch_it() {
+        let track = TrackSpline::demo_circuit();
+        let classes = [ChassisClass::Warden, ChassisClass::Warden];
+        let mut karts: Vec<KartState> = (0..2).map(|i| KartState::spawn(&track, i)).collect();
+        let mut combat = Combat::new(&track, &classes, 0);
+        combat.karts[0].held = ItemKind::Banana;
+
+        let mut inputs = vec![Input::default(); 2];
+        inputs[0].use_item = true;
+        let places = [1u8, 2u8];
+        let mut particles = ParticleSystem::with_capacity(64);
+        let mut events = SfxQueue::new();
+
+        // First step drops the banana behind kart 0.
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        let banana = combat
+            .projectiles
+            .iter()
+            .find(|p| p.alive() && p.kind == ProjKind::Banana)
+            .expect("a banana should be dropped");
+        assert!(!combat.stunned(0), "the owner is not spun by its own fresh banana");
+
+        // Park kart 1 on top of the banana and step again.
+        karts[1].position = banana.pos;
+        inputs[0].use_item = false;
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        assert!(combat.stunned(1), "the first kart over the banana should spin out");
+    }
+
+    #[test]
+    fn star_boosts_invincible_and_expires() {
+        let track = TrackSpline::demo_circuit();
+        let classes = [ChassisClass::Warden, ChassisClass::Warden];
+        let mut karts: Vec<KartState> = (0..2).map(|i| KartState::spawn(&track, i)).collect();
+        let mut combat = Combat::new(&track, &classes, 0);
+        combat.karts[0].held = ItemKind::Star;
+
+        let mut inputs = vec![Input::default(); 2];
+        inputs[0].use_item = true;
+        let places = [1u8, 2u8];
+        let mut particles = ParticleSystem::with_capacity(64);
+        let mut events = SfxQueue::new();
+
+        combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        assert!(combat.karts[0].star_time > 0.0, "using a star starts the timer");
+        assert!(karts[0].is_boosting(), "the star also grants a speed boost");
+        assert_eq!(combat.karts[0].held, ItemKind::None);
+
+        // A star-powered kart shrugs off a spinout.
+        karts[0].speed = 30.0;
+        karts[0].velocity = karts[0].forward * 30.0;
+        assert!(!spinout(&mut combat.karts, &mut karts, 0), "star power blocks spinout");
+        assert_eq!(karts[0].speed, 30.0, "speed is untouched while star-powered");
+
+        // The star expires after its duration.
+        inputs[0].use_item = false;
+        let steps = (STAR_DURATION / (1.0 / 60.0)) as i32 + 5;
+        for _ in 0..steps {
+            combat.step(&mut karts, &inputs, &track, &mut particles, &mut events, &places, true, 1.0 / 60.0);
+        }
+        assert!(combat.karts[0].star_time <= 0.0, "star power must expire");
     }
 }

@@ -30,8 +30,8 @@ use macroquad::prelude::*;
 use crate::audio::{Sfx, SfxQueue, MASTER_VOLUME};
 use crate::combat::{ChassisClass, Combat};
 use crate::mesh_gen::{
-    build_ammo_crate_mesh, build_boost_pad_mesh, build_kart_mesh, build_projectile_meshes,
-    build_wheel_mesh, KART_PALETTE,
+    build_accel_strip_mesh, build_ammo_crate_mesh, build_boost_pad_mesh, build_kart_mesh,
+    build_projectile_meshes, build_wheel_mesh, KART_PALETTE,
 };
 use crate::physics::{
     compute_ai_inputs, step_all, Input, KartState, ParticleSystem, SparkStage, FIXED_DT,
@@ -225,6 +225,8 @@ pub struct Game {
     pub proj_meshes: Vec<Mesh>,
     /// Single boost-pad mesh, instanced at every pad on the current track (M8).
     pub pad_mesh: Mesh,
+    /// Single accel-strip mesh, instanced at every strip on the current track (M14).
+    pub accel_strip_mesh: Mesh,
     /// One spinning-preview kart per [`CLASS_ORDER`] entry (class-select screen).
     pub preview_meshes: Vec<Mesh>,
 
@@ -301,6 +303,7 @@ impl Game {
             crate_mesh: build_ammo_crate_mesh(),
             proj_meshes: build_projectile_meshes(),
             pad_mesh: build_boost_pad_mesh(),
+            accel_strip_mesh: build_accel_strip_mesh(),
             preview_meshes,
             karts,
             prev_karts,
@@ -574,6 +577,7 @@ impl Game {
                 // Edge-triggered actions fire only on the first substep of a frame.
                 self.inputs[0].drift_pressed = false;
                 self.inputs[0].trick_pressed = false;
+                self.inputs[0].use_item = false;
             }
             // Combat AI nudges the AI karts' driving (dodge / aim / catch-up drift).
             if self.race.phase == Phase::Racing {

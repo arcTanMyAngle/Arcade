@@ -85,6 +85,11 @@ const BOOST_ACCEL_MULT: f32 = 2.50;
 /// orange mini-turbo durations, reusing the same `boost_time` machinery.
 const PAD_BOOST_DUR: f32 = 0.9;
 
+/// Boost granted by driving over an acceleration strip (M14). Longer than the M8
+/// pad boost — the "stronger" half of the strip, realised as a longer sustained
+/// boost off the same `boost_time` machinery.
+const ACCEL_STRIP_DUR: f32 = 1.4;
+
 /// Slipstream / draft (M5.1): a fully-drafting kart (factor 1.0) gets this much
 /// extra top speed as an *overspeed allowance*. `combat.rs` decides **who** is
 /// drafting (the 0..1 factor, ramped/decayed); this is **what** it does to speed.
@@ -120,7 +125,7 @@ pub struct Input {
     pub drift_held: bool,
     pub drift_pressed: bool, // rising edge this tick
     pub trick_pressed: bool, // rising edge (jump / drift while airborne)
-    pub use_item: bool,
+    pub use_item: bool, // item use (rising edge this tick; cleared after the first substep)
     pub fire: bool, // cannon trigger (held); reload gates the actual cadence
 }
 
@@ -289,6 +294,10 @@ impl KartState {
         // timer, so the camera juice + boost SFX fire automatically.
         if self.grounded && g.on_road && track.boost_at(g.u, g.lateral) {
             self.boost_time = self.boost_time.max(PAD_BOOST_DUR);
+        }
+        // Accel strips (M14): same detection trick, but a longer boost.
+        if self.grounded && g.on_road && track.accel_at(g.u, g.lateral) {
+            self.boost_time = self.boost_time.max(ACCEL_STRIP_DUR);
         }
 
         // Visual smoothing.
@@ -853,6 +862,66 @@ mod tests {
         k2.velocity = k2.forward * 20.0;
         k2.step(&Input { throttle: 1.0, ..Default::default() }, &track, 0.0, FIXED_DT);
         assert!(!k2.is_boosting(), "missing the pad strip should grant no boost");
+    }
+
+    /// A launch ramp (M14) raises the road surface; a kart driving it goes
+    /// airborne past the lip and can cash a trick into a landing boost.
+    #[test]
+    fn ramp_launches_kart_and_trick_lands_with_boost() {
+        let track = TrackSpline::demo_circuit();
+        let ramp = track.ramps()[0];
+        let mut k = KartState::spawn(&track, 0);
+        let f = track.frame(ramp.u_start);
+        k.position = f.position;
+        k.forward = f.forward;
+        k.up = f.up;
+        k.track_u = ramp.u_start;
+        k.speed = 30.0;
+        k.velocity = f.forward * 30.0;
+
+        let mut went_airborne = false;
+        let mut trick_sent = false;
+        let mut landed_boost = false;
+        for _ in 0..(4 * 60) {
+            // Arm a trick once we're properly airborne (past the minimum air time).
+            let want_trick = !k.grounded && k.air_time > 0.2 && !trick_sent;
+            if want_trick {
+                trick_sent = true;
+            }
+            let input = Input { throttle: 1.0, trick_pressed: want_trick, ..Default::default() };
+            k.step(&input, &track, 0.0, FIXED_DT);
+            if !k.grounded {
+                went_airborne = true;
+            }
+            if went_airborne && k.grounded && k.is_boosting() {
+                landed_boost = true;
+            }
+        }
+        assert!(went_airborne, "driving the ramp should launch the kart airborne");
+        assert!(trick_sent, "should have armed a trick mid-air");
+        assert!(landed_boost, "landing a ramp trick should grant a boost");
+    }
+
+    /// An accel strip (M14) grants a boost that outlasts a boost pad's.
+    #[test]
+    fn accel_strip_boost_outlasts_a_pad() {
+        let track = TrackSpline::demo_circuit();
+        let strip = track.accel_strips()[0];
+        let mut k = KartState::spawn(&track, 0);
+        k.position = strip.frame.position;
+        k.forward = strip.frame.forward;
+        k.up = strip.frame.up;
+        k.track_u = strip.u_center;
+        k.speed = 20.0;
+        k.velocity = k.forward * 20.0;
+        k.step(&Input { throttle: 1.0, ..Default::default() }, &track, 0.0, FIXED_DT);
+        assert!(k.is_boosting(), "driving an accel strip should grant a boost");
+        assert!(
+            k.boost_time > PAD_BOOST_DUR,
+            "accel strip boost ({}) must outlast a pad's ({})",
+            k.boost_time,
+            PAD_BOOST_DUR
+        );
     }
 
     #[test]

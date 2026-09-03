@@ -13,6 +13,7 @@
 
 use macroquad::models::{Mesh, Vertex};
 use macroquad::prelude::*;
+use std::f32::consts::PI;
 
 // ----------------------------------------------------------------------------
 // Tunables
@@ -35,6 +36,23 @@ const PAD_HALF_LEN: f32 = 4.0;
 /// drive roughly down the middle to catch it (hugging the curb misses).
 pub const PAD_HALF_WIDTH: f32 = ROAD_HALF_WIDTH * 0.6;
 
+// --- M14 track obstacles: launch ramps + acceleration strips -----------------
+
+/// Number of launch ramps per circuit (M14). Each is a full-width raised lip.
+const N_RAMPS: usize = 3;
+/// Longitudinal rise length (m) of a ramp, from its base to the launch lip.
+const RAMP_LEN: f32 = 10.0;
+/// Lip height (m) above the base road surface.
+const RAMP_HEIGHT: f32 = 2.2;
+
+/// Number of acceleration strips per circuit (M14).
+const N_ACCEL_STRIPS: usize = 3;
+/// Half-length (m) of an accel strip's footprint along the track — longer than a
+/// boost pad (4 m), which is what makes the boost read as stronger.
+pub const ACCEL_HALF_LEN: f32 = 7.0;
+/// Half-width (m) of the accel-strip — centered on the road like a boost pad.
+pub const ACCEL_HALF_WIDTH: f32 = ROAD_HALF_WIDTH * 0.6;
+
 /// Uniform scale applied to every circuit's control anchors (M9). >1 lengthens
 /// each lap (and gentles the corners, since radius grows with it) while keeping the
 /// road width, banking model and all derived data (LUT, mesh, pads, grid) intact.
@@ -56,6 +74,8 @@ const LUT_PER_SEG: usize = 24;
 
 // Procedural surface colors (modulated by baked lighting).
 const ROAD_COLOR: Color = Color::new(0.20, 0.20, 0.24, 1.0);
+/// Warm dirt accent for the raised ramp surface (M14) — makes the lip read.
+const RAMP_COLOR: Color = Color::new(0.42, 0.30, 0.18, 1.0);
 const CURB_RED: Color = Color::new(0.85, 0.12, 0.12, 1.0);
 const CURB_WHITE: Color = Color::new(0.93, 0.93, 0.93, 1.0);
 
@@ -134,6 +154,39 @@ pub struct BoostPad {
     pub frame: Frame,
 }
 
+/// A launch ramp (M14): a full-width section of road that rises smoothly from
+/// `u_start` to a launch lip at `u_end`, then drops back to base level. The rise
+/// is expressed as a height offset on the road surface (see
+/// [`TrackSpline::surface_offset`]) so it appears in **both** the road mesh and
+/// the physics ground query — a kart climbing it becomes airborne past the lip.
+#[derive(Clone, Copy, Debug)]
+pub struct Ramp {
+    /// Spline parameter where the rise begins (surface at base height).
+    pub u_start: f32,
+    /// Spline parameter of the launch lip (surface at full `height`).
+    pub u_end: f32,
+    /// Lip height above the base road surface (m).
+    pub height: f32,
+    /// Banked road frame at the lip (for rendering / tests).
+    pub frame: Frame,
+}
+
+/// An acceleration strip (M14): a longer, stronger boost strip. Detection is the
+/// same pure u-space interval test as [`BoostPad`] (reusing the ground-query
+/// outputs), but the physics layer grants a longer boost than a pad. Rendered as
+/// a distinct orange-red strip.
+#[derive(Clone, Copy, Debug)]
+pub struct AccelStrip {
+    /// Spline parameter at the strip's center.
+    pub u_center: f32,
+    /// Half-extent of the strip in spline-parameter space (longitudinal).
+    pub u_half: f32,
+    /// Half-width of the drivable strip (lateral, world units).
+    pub half_width: f32,
+    /// Banked road frame at the strip center (for rendering).
+    pub frame: Frame,
+}
+
 // ----------------------------------------------------------------------------
 // Ground query result (consumed by physics.rs)
 // ----------------------------------------------------------------------------
@@ -176,6 +229,8 @@ pub struct TrackSpline {
     lut: Vec<LutEntry>,
     total_length: f32,
     boost_pads: Vec<BoostPad>,
+    ramps: Vec<Ramp>,
+    accel_strips: Vec<AccelStrip>,
 }
 
 impl TrackSpline {
@@ -209,9 +264,13 @@ impl TrackSpline {
             lut: Vec::new(),
             total_length: 0.0,
             boost_pads: Vec::new(),
+            ramps: Vec::new(),
+            accel_strips: Vec::new(),
         };
         spline.build_lut();
         spline.place_boost_pads(N_BOOST_PADS);
+        spline.place_ramps(N_RAMPS);
+        spline.place_accel_strips(N_ACCEL_STRIPS);
         spline
     }
 
@@ -454,6 +513,104 @@ impl TrackSpline {
         false
     }
 
+    // -- ramps + accel strips (Milestone 14) --------------------------------
+
+    /// Place `count` launch ramps around the loop at fixed fractions (offset from
+    /// the boost pads so the two never overlap). Each ramp rises from `u_start`
+    /// over [`RAMP_LEN`] metres to its lip. Called once at build time.
+    fn place_ramps(&mut self, count: usize) {
+        let total = self.total_length;
+        let mut ramps = Vec::with_capacity(count);
+        for k in 0..count {
+            let d_start = total * (0.15 + k as f32 * 0.33);
+            let u_start = self.u_at_distance(d_start);
+            let u_end = self.u_at_distance(d_start + RAMP_LEN);
+            ramps.push(Ramp {
+                u_start,
+                u_end,
+                height: RAMP_HEIGHT,
+                frame: self.frame(u_end),
+            });
+        }
+        self.ramps = ramps;
+    }
+
+    /// Place `count` acceleration strips around the loop. Longer than the M8
+    /// pads (see [`ACCEL_HALF_LEN`]); placed at fractions clear of pads + ramps.
+    fn place_accel_strips(&mut self, count: usize) {
+        let total = self.total_length;
+        let mut strips = Vec::with_capacity(count);
+        for k in 0..count {
+            let d = total * (0.30 + k as f32 * 0.30);
+            let u_center = self.u_at_distance(d);
+            let mpu = self.tangent(u_center).length().max(1e-3);
+            let u_half = (ACCEL_HALF_LEN / mpu).clamp(0.02, 0.8);
+            strips.push(AccelStrip {
+                u_center,
+                u_half,
+                half_width: ACCEL_HALF_WIDTH,
+                frame: self.frame(u_center),
+            });
+        }
+        self.accel_strips = strips;
+    }
+
+    /// The launch ramps on this circuit.
+    #[inline]
+    pub fn ramps(&self) -> &[Ramp] {
+        &self.ramps
+    }
+
+    /// The acceleration strips on this circuit.
+    #[inline]
+    pub fn accel_strips(&self) -> &[AccelStrip] {
+        &self.accel_strips
+    }
+
+    /// True when a point at spline parameter `track_u` with signed `lateral`
+    /// offset lies on an accel strip. Same O(strips) interval test as
+    /// [`Self::boost_at`] — reuses the ground query, no new broadphase.
+    pub fn accel_at(&self, track_u: f32, lateral: f32) -> bool {
+        let n = self.segments.len() as f32;
+        let u = track_u.rem_euclid(n);
+        for s in &self.accel_strips {
+            let mut d = (u - s.u_center).abs();
+            d = d.min(n - d);
+            if d <= s.u_half && lateral.abs() <= s.half_width {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Extra height (m) the road surface sits **above** the base centerline at
+    /// spline parameter `u`, from the launch ramps (M14). Zero everywhere except
+    /// on a ramp's rise, where it eases smoothly (cosine, C1 at both ends) from 0
+    /// to the lip height. Both the road mesh and the ground query add this to the
+    /// surface, so a kart climbs the ramp and, past the lip (where it drops back
+    /// to 0), carries its momentum into the air.
+    pub fn surface_offset(&self, u: f32) -> f32 {
+        let n = self.segments.len() as f32;
+        let uu = u.rem_euclid(n);
+        let mut h = 0.0f32;
+        for r in &self.ramps {
+            // Fraction through the rise [u_start, u_end] (our placement never
+            // wraps, but stay correct if it ever does).
+            let span = if r.u_end >= r.u_start {
+                r.u_end - r.u_start
+            } else {
+                r.u_end + n - r.u_start
+            };
+            let d = if uu >= r.u_start { uu - r.u_start } else { uu + n - r.u_start };
+            let t = d / span.max(1e-4);
+            if (0.0..=1.0).contains(&t) {
+                let bump = 0.5 * (1.0 - (PI * t).cos());
+                h = h.max(r.height * bump);
+            }
+        }
+        h
+    }
+
     // -- ground queries (physics) ------------------------------------------
 
     /// Project a world point onto the track with no prior knowledge (O(n) scan).
@@ -515,13 +672,17 @@ impl TrackSpline {
         let f = self.frame(u);
         let rel = p - f.position;
         let lateral = rel.dot(f.right);
-        let height = rel.dot(f.up);
         let clamped = lateral.clamp(-ROAD_HALF_WIDTH, ROAD_HALF_WIDTH);
+        // Launch ramps (M14) raise the road surface above the base centerline;
+        // both the surface point and the measured height account for it, so a
+        // kart climbs the rise and flies past the lip.
+        let lift = self.surface_offset(u);
+        let height = rel.dot(f.up) - lift;
 
         GroundInfo {
             u,
-            center: f.position,
-            surface: f.position + f.right * clamped,
+            center: f.position + f.up * lift,
+            surface: f.position + f.right * clamped + f.up * lift,
             normal: f.up,
             right: f.right,
             forward: f.forward,
@@ -580,7 +741,8 @@ pub fn build_track_meshes(spline: &TrackSpline) -> Vec<Mesh> {
         for r in 0..=quads {
             let ring = start + r;
             let dist = ring as f32 * ring_len;
-            push_ring(&mut verts, &spline.frame_at_distance(dist), dist, ring, light);
+            let u = spline.u_at_distance(dist);
+            push_ring(&mut verts, &spline.frame(u), dist, ring, light, spline.surface_offset(u));
         }
         for r in 0..quads {
             let bi = (r * 4) as u16;
@@ -616,7 +778,8 @@ pub fn generate_into(spline: &TrackSpline, out: &mut RoadMeshData) {
 
     for i in 0..rings {
         let dist = i as f32 * ring_len;
-        push_ring(&mut out.vertices, &spline.frame_at_distance(dist), dist, i, light);
+        let u = spline.u_at_distance(dist);
+        push_ring(&mut out.vertices, &spline.frame(u), dist, i, light, spline.surface_offset(u));
     }
     for i in 0..rings {
         let j = (i + 1) % rings; // wrap closes the loop
@@ -628,15 +791,25 @@ pub fn generate_into(spline: &TrackSpline, out: &mut RoadMeshData) {
     }
 }
 
-/// Append one cross-section ring (4 vertices) at `dist` along the track.
-fn push_ring(verts: &mut Vec<Vertex>, f: &Frame, dist: f32, ring: usize, light: Vec3) {
+/// Append one cross-section ring (4 vertices) at `dist` along the track. `lift`
+/// is the launch-ramp surface offset at this ring (M14) — the road + curb tops
+/// rise with it, and the surface picks up a ramp accent so ramps read clearly.
+fn push_ring(verts: &mut Vec<Vertex>, f: &Frame, dist: f32, ring: usize, light: Vec3, lift: f32) {
     let v_uv = dist / UV_TILE;
-    let l_edge = f.position - f.right * ROAD_HALF_WIDTH;
-    let r_edge = f.position + f.right * ROAD_HALF_WIDTH;
+    let l_edge = f.position - f.right * ROAD_HALF_WIDTH + f.up * lift;
+    let r_edge = f.position + f.right * ROAD_HALF_WIDTH + f.up * lift;
     let l_top = l_edge + f.up * CURB_HEIGHT;
     let r_top = r_edge + f.up * CURB_HEIGHT;
 
-    let road_col = shade(ROAD_COLOR, f.up, light);
+    // A raised ring is on a ramp: tint the surface so the lip reads (M14).
+    let ramp_mix = (lift / RAMP_HEIGHT).clamp(0.0, 1.0);
+    let base = Color::new(
+        ROAD_COLOR.r + (RAMP_COLOR.r - ROAD_COLOR.r) * ramp_mix,
+        ROAD_COLOR.g + (RAMP_COLOR.g - ROAD_COLOR.g) * ramp_mix,
+        ROAD_COLOR.b + (RAMP_COLOR.b - ROAD_COLOR.b) * ramp_mix,
+        ROAD_COLOR.a,
+    );
+    let road_col = shade(base, f.up, light);
     // Curbs alternate red/white per ring for the classic rumble-strip look.
     let curb_base = if ring % 2 == 0 { CURB_RED } else { CURB_WHITE };
     let l_curb = shade(curb_base, f.right, light); // inner face -> +right
@@ -743,6 +916,8 @@ mod tests {
             assert!(f.forward.dot(f.up).abs() < 1e-3);
             assert!(f.right.dot(f.up).abs() < 1e-3);
             assert!(s.boost_pads().len() >= 4, "need >=4 boost pads per lap");
+            assert!(!s.ramps().is_empty(), "need launch ramps per lap");
+            assert!(!s.accel_strips().is_empty(), "need accel strips per lap");
         }
     }
 
@@ -761,5 +936,37 @@ mod tests {
         // Midway between the first two pads is clear of both.
         let mid = 0.5 * (pads[0].u_center + pads[1].u_center);
         assert!(!s.boost_at(mid, 0.0), "between pads → not detected");
+    }
+
+    /// Launch-ramp surface: raised on the rise, flat before it and past the lip.
+    #[test]
+    fn ramp_surface_offset_is_localized() {
+        let s = TrackSpline::demo_circuit();
+        let ramp = s.ramps()[0];
+        // Just before the rise starts: base surface (0).
+        assert!(s.surface_offset(ramp.u_start - 0.2) < 1e-3);
+        // At the lip: full height.
+        assert!((s.surface_offset(ramp.u_end) - ramp.height).abs() < 1e-3);
+        // Just past the lip: back to base (0) — the launch drop.
+        assert!(s.surface_offset(ramp.u_end + 0.2) < 1e-3);
+        // Midway up the rise is between 0 and full height.
+        let mid = 0.5 * (ramp.u_start + ramp.u_end);
+        let h = s.surface_offset(mid);
+        assert!(h > 0.0 && h < ramp.height, "rise should be partial mid-ramp: {h}");
+    }
+
+    /// Accel-strip detection: on it when centered, off it beside / between strips.
+    #[test]
+    fn accel_strip_footprint_is_localized() {
+        let s = TrackSpline::demo_circuit();
+        let strips = s.accel_strips();
+        let strip = strips[0];
+        assert!(s.accel_at(strip.u_center, 0.0), "centered on a strip → detected");
+        assert!(
+            !s.accel_at(strip.u_center, strip.half_width + 2.0),
+            "off to the side of the strip → not detected"
+        );
+        let mid = 0.5 * (strips[0].u_center + strips[1].u_center);
+        assert!(!s.accel_at(mid, 0.0), "between strips → not detected");
     }
 }

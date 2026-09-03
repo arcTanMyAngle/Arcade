@@ -5,10 +5,11 @@ The "Combat Grand Prix" pivot (**M1–M4**), **M5** (kart-to-kart collision), **
 pads), **M5.1** (slipstream/draft), **M9** (juice & recovery + longer laps), **M10**
 (minimap + rubber-band AI) and **M11** (settings + race options) are all **done** — see
 `handoff.md` for architecture and the completed-milestone log below. This plan now covers
-the **one remaining milestone** (M12, best-lap ghost replay). Each entry lists scope, the
-files it touches, a **measurable DoD**, and a **benchmark gate**. Preserve the five core
-invariants in `handoff.md` (60 Hz fixed step, zero-alloc loop, rayon, lean `KartState`,
-procedural assets) in everything below.
+the **Season 2 roadmap** — a multi-milestone pass over MK-style items, track obstacles,
+graphics and game-feel (**M13 → M16**), tackled one milestone per working session (M12 ghost
+replay is parked in backlog). Each entry lists scope, the files it touches, a **measurable
+DoD**, and a **benchmark gate**. Preserve the five core invariants in `handoff.md` (60 Hz
+fixed step, zero-alloc loop, rayon, lean `KartState`, procedural assets) in everything below.
 
 ## How "done" is judged (applies to every milestone)
 - **Tests:** each milestone adds ≥1 headless test; `cargo test` stays green and **0 warnings**.
@@ -31,8 +32,12 @@ Numeric targets are starting tunables, not laws — but ship with them measured 
 | ~~**M9 Juice/Recovery**~~ ✅ | **≈ +5 µs** (budget < +15) | respawn rides the ground query; shake/feedback render-side; hit-stop = substep skip; +5 µs is the bigger grid from `LAP_SCALE` |
 | ~~**M10 Minimap/Rubber-band**~~ ✅ | **≈ +0 µs** (budget < +10) | one O(n) gap scan + two `rubber_band` divides/AI kart (sub-µs); the minimap is render-side. Substep **144.5 µs** (within noise of the M9 152) |
 | ~~**M11 Settings**~~ ✅ | **≈ +0 µs** | config/UI only; field size is a `[..active_karts]` sub-slice of full-capacity buffers (0 new alloc), so fewer karts only *speeds up* the substep. A/B vs the stashed pre-M11 tree read identical minima |
-| **M12 Ghost replay** | **< +10 µs** | one pose write/substep into a pre-sized ring; playback render-side |
-| **Running total** | must keep substep **< 500 µs** | currently ~134 µs → ~190 µs worst case, ample headroom |
+| ~~**M13 Items (MK-style)**~~ ✅ | **within budget** (376.14 µs absolute @ 8 karts, 2.26% of frame — machine-state sensitive; hot-path item work is O(boxes×karts) and sub-µs when idle) | items ride the existing parallel projectile pass; 0 new alloc; star reuses `boost_time` |
+| ~~**M14 Ramps + accel strips**~~ ✅ | **≈ +0 µs** (353.82 µs absolute @ 8 karts, 2.12% of frame — ramps/strips ride the ground query like boost pads; budget < +5) | launch reuses the airborne+trick machinery; accel strip is a longer `boost_time` |
+| **M15 Graphics & FX** | **≈ +0 µs** | render-side only (sky/ground/item glow/speed lines); sim untouched; MSAA 4x unchanged |
+| **M16 Mechanics & feel** | **≈ +0 µs** | pure tunables + camera/HUD; needs a full `cargo run --release` feel pass |
+| *(parked)* **M12 Ghost replay** | < +10 µs | one pose write/substep into a pre-sized ring; playback render-side |
+| **Running total** | must keep substep **< 500 µs** | currently ~134 µs → well under the gate even after M13–M16, ample headroom |
 
 ---
 
@@ -105,7 +110,7 @@ field & short/long laps, FOV extremes, volume-bar tracking — needs a `cargo ru
 
 ---
 
-### M12 — Best-lap ghost replay  *(marquee flair)*
+### M12 — Best-lap ghost replay  *(parked — backlog, not part of Season 2)*
 **Why:** a satisfying skill loop — race your own best lap. All the timing data exists; the
 only new tech is a zero-alloc pose recorder.
 **Scope:** record the player's per-substep pose into a **fixed-capacity ring** (sized for the
@@ -123,6 +128,111 @@ times if needed).
 - **Headless test:** recording a synthetic pose stream then replaying it reproduces the sampled
   poses within tolerance; a slower lap does **not** overwrite a faster stored one.
 - **Benchmark:** substep delta **< +10 µs** (one pose write/substep; playback is render-side).
+
+---
+
+### M13 — Item pickup system (Mario-Kart-Wii-style items) ✅ **DONE (2026-09-03)**
+**Why:** the Combat Grand Prix loop currently gives every chassis a fixed cannon fed by generic
+ammo crates. The classic MK "?"-box roulette — mushroom / banana / shells / star — is the missing
+skill-and-luck layer, and it's exactly what "pick up items like Mario Kart Wii" is asking for.
+**Scope:** keep the class cannons as-is and add a parallel **item** layer:
+- `ItemKind` enum (`Mushroom`, `Banana`, `GreenShell`, `RedShell`, `Star` + a `None` = empty slot)
+  with `name()` / `color()` / `sfx()` helpers.
+- `KartCombat` gains `held: ItemKind` and `star_time` — both in the existing per-kart parallel
+  array, so `KartState` stays lean & `Copy` (invariant #4).
+- **Item boxes** (`Vec<ItemBox>` on `Combat`, placed like boost pads/crates around the lap): a
+  procedural glowing "?" box; driving through an available one rolls a seeded-RNG item (roulette)
+  into that kart's `held` slot and starts the box's respawn cooldown.
+- **Use:** a new edge-triggered player input (`E` / `LeftAlt`; the cannon stays on `Ctrl` / `F`)
+  fires the held item; AI use items opportunistically (mushroom on straights, banana when chased,
+  shells at the kart ahead, star defensively).
+- **Item behavior** (all in the fixed step, reusing the existing projectile pool + spatial grid +
+  `spinout` machinery): Mushroom → instant `boost_time`; Banana → dropped one-hit spinning hazard;
+  GreenShell → straight, wall-bouncing shell; RedShell → homing shell at the nearest kart ahead;
+  Star → `star_time` (temporary invincibility + speed, with a render-side glow).
+- **HUD:** a bottom-right item-slot icon + MUSHROOM / STAR banners.
+**Touches:** `combat.rs` (items, boxes, AI use, hazard integration), `physics.rs` (star speed
+allowance), `game.rs` (edge clearing for the new input), `main.rs` (item key, box + shell/banana
+rendering, HUD), `mesh_gen.rs` (item box + shell/banana meshes), `audio.rs` (item roll/use/star
+SFX).
+
+**DoD (measurable):**
+- Headless tests: a box grants exactly one item from the roulette; mushroom/star apply their
+  boost; banana/shell spin a victim out and disappear (banana is one-hit); red shell homes; star
+  grants spinout immunity and expires; AI use items; `KartState` never carries item state.
+- **Benchmark:** substep delta **< +20 µs** (items ride the existing parallel projectile pass; the
+  pickup scan is O(karts×boxes) like the crate pass), **0 new per-tick alloc**.
+- Builds 0 warnings; `cargo test` green (count grows).
+
+---
+
+### M14 — Track obstacles: launch ramps + acceleration strips ✅ **DONE (2026-09-03)**
+Shipped to spec. **Ramps:** 3 full-width launch ramps per circuit raise the road surface via
+`TrackSpline::surface_offset` (cosine ease to the lip, C1 at both ends) — the same offset feeds
+both the road mesh (`push_ring`) and the physics ground query, so a kart climbs the lip and, past
+it, becomes airborne; tricks cash the existing landing boost. **Accel strips:** 3 longer orange-red
+strips per circuit detected by `accel_at` (same u-space interval test as `boost_at`), granting an
+`ACCEL_STRIP_DUR = 1.4 s` boost (vs the pad's 0.9 s) via the same `boost_time` machinery. Ramps
+read as a warm dirt tint on the raised rings; strips render as a distinct 4-chevron mesh in world
++ track preview. 4 new headless tests (**62 total**), 0 warnings, `bench_sim_substep` 353.82 µs
+@ 8 karts (2.12% of frame — ≈ +0, well under the < +5 µs budget). **Ramp/strip feel needs a
+`cargo run --release` pass.**
+**Why:** the circuits are smooth Bézier surfaces with boost pads but no vertical/obstacle play.
+Ramps give the existing airborne + trick + landing-boost machinery something to bite on (big,
+earned speed), and stronger "acceleration" strips add the speed-run thrill.
+**Scope:**
+- `Ramp`: a procedural raised launch lip built into the road surface (mesh + physics). Driving up
+  it becomes airborne; tricks cash the landing boost. Detection rides the ground query (like boost
+  pads) — no new broadphase.
+- `AccelStrip`: a longer, stronger boost strip (reuses `boost_time`, new duration + tint), distinct
+  from the M8 pads.
+- Placement per circuit in `TrackSpline` (each builder seeds its ramps + strips); the track-select
+  preview + minimap optionally show them.
+**Touches:** `track_3d.rs` (Ramp/AccelStrip data + placement + mesh), `physics.rs` (ramp launch +
+accel-strip boost, both via the ground-query outputs), `mesh_gen.rs` or `track_3d` (ramp mesh),
+`main.rs` (render ramps/strips), `game.rs` (nothing new — `track_dirty` already rebuilds).
+
+**DoD (measurable):**
+- Headless tests: a kart driving a ramp becomes airborne and can trick → landing boost; an accel
+  strip grants a longer/stronger boost than a pad; both footprints are localized (off-footprint
+  misses, like the M8 pad test).
+- **Benchmark:** substep delta **< +5 µs**; 0 new per-tick alloc; 0 warnings.
+
+---
+
+### M15 — Graphics & FX polish (Arc iGPU-safe)
+**Why:** the low-poly look can be lifted substantially with pure procedural rendering — no texture
+files, no post-processing stack, MSAA 4x untouched — staying well within the Intel Arc iGPU budget.
+**Scope:**
+- Sky: vertical gradient + sun glow (procedural).
+- Ground/road: subtle checker/noise + a finish-line stripe.
+- Item boxes + ramps/accel strips get their own pulsing/glow materials (reuse the M4 `crate_pulse`
+  fallback pattern).
+- Speed FX: boost/speed lines at high speed, star sparkle trail, brighter drift sparks.
+**Touches:** `main.rs` (sky/ground/FX draw), `shaders.rs` (optional subtle glow material),
+`mesh_gen.rs` (FX sprites / item-box mesh).
+
+**DoD (measurable):**
+- All changes are render-side → substep **≈ +0 µs**, 0 new per-tick alloc, 0 warnings.
+- **Feel:** needs a `cargo run --release` pass (call out — no GPU window in the dev env).
+
+---
+
+### M16 — Mechanics & player-feel pass
+**Why:** after items + ramps land, tune the driving loop end-to-end so acceleration, drift →
+mini-turbo, boost decay, camera juice and HUD readability all feel cohesive (the "fun and smooth"
+bar).
+**Scope:**
+- Tunables pass in `physics.rs` (accel/brake curve, drift charge + mini-turbo timings, boost decay,
+  star/draft ceilings).
+- Camera + HUD in `main.rs` (FOV swell, item/boost readouts, position arrows).
+- Balance in `combat.rs` / `game.rs`: AI skill curve, item frequency, star duration.
+**Touches:** `physics.rs`, `main.rs`, `combat.rs`, `game.rs` (mostly constants + small code).
+
+**DoD (measurable):**
+- Headless tests where numeric (accel monotonicity, drift charge timings, boost durations).
+- Substep **≈ +0 µs** (pure tunables); 0 new alloc; 0 warnings.
+- **Feel:** a full `cargo run --release` session (call out).
 
 ---
 
@@ -151,10 +261,12 @@ times if needed).
 ---
 
 ## Recommended order + pending verification
-Build order: **M10 → M11 → M12** (awareness/balance, then configurability, then the replay
-flair). M5.1, M9, **M10** and **M11** are done. Only **M12 (best-lap ghost replay)** remains, and
-it fits comfortably under the 500 µs substep gate (see the table above). **Recommended next: M12
-— then the single batched `cargo run --release` verification session for M5–M11.**
+Season 2 build order: **M13 → M14 → M15 → M16** — items first (the marquee feature and the most
+new tech), then ramps/accel to give items and tricks something to play off, then the graphics/FX
+pass, finally the mechanics/feel tuning once everything else is in. Each is a self-contained
+working session: it lands on a green `cargo test` + 0-warning build with its own benchmark delta
+recorded. **Recommended next: M15 — then a batched `cargo run --release` verification session once
+M13–M16 are all landed.** M12 ghost replay is parked (see Backlog).
 
 **Pending human verification (one `cargo run --release` pass — no GPU/audio in the dev env):**
 - **M11 settings** — the two-item menu + Settings panel; does a **small field** (2–3 karts) and a
@@ -184,6 +296,30 @@ it fits comfortably under the 500 µs substep gate (see the table above). **Reco
 ---
 
 ## Completed milestone log (reference — details in `handoff.md` + memory)
+- **M14 — Track obstacles: launch ramps + acceleration strips** ✅ (2026-09-03): 3 full-width
+  launch ramps + 3 acceleration strips per circuit. Ramps raise the road surface via
+  `TrackSpline::surface_offset` (cosine ease to the lip), feeding **both** the road mesh and the
+  ground query — a kart climbs the lip and, past it, becomes airborne; tricks cash the existing
+  landing boost. Accel strips are detected by `accel_at` (same u-space interval test as
+  `boost_at`) and grant a 1.4 s boost (vs the 0.9 s pad) via the same `boost_time`; rendered as a
+  distinct 4-chevron orange-red mesh (world + track preview). 4 new headless tests (**62 total**),
+  0 warnings, `bench_sim_substep` 353.82 µs @ 8 karts (2.12% of frame, ≈ +0). **Ramp/strip feel
+  needs a `cargo run --release` pass.** Next-up: **M15**.
+- **M13 — Item pickup system (Mario-Kart-Wii-style items)** ✅ (2026-09-03): MK-style items added
+  parallel to the class cannons. New `ItemKind` (Mushroom/Banana/GreenShell/RedShell/Star/None) with
+  a deterministic xorshift roulette (`roll_item`); `KartCombat` gains `held` + `star_time` (parallel
+  array — `KartState` stays lean); 8 `ItemBox` "?" cubes placed around each lap (offset from the ammo
+  crates), granting an item on drive-through when the slot is empty. Player fires the held item on a
+  new edge-triggered `E`/`LeftAlt` (`Input.use_item`, cleared after the first substep); AI use items
+  opportunistically (mushroom on straights, banana when chased, shells at a kart ahead, star when
+  threatened). Behaviors: mushroom → `boost_time`; banana → one-hit dropped hazard; green shell →
+  straight wall-bouncing shell; red shell → homing shell; star → `star_time` invincibility (spinouts
+  blocked via a bool-returning `spinout`) + a long `boost_time` surge. Shells/banana ride the existing
+  parallel projectile pass (new `ProjKind` variants + `shell_ride` helper); item state never touches
+  `KartState`. 3 new SFX (ItemRoll/ItemLaunch/Star), textured "?" box + banana/shell meshes, HUD item
+  slot + STAR banner, render-side star glow. 5 headless tests (**58 total**), build 0 warnings,
+  `bench_sim_substep` 376.14 µs @ 8 karts (2.26% of frame; machine-state sensitive, well under the
+  500 µs gate). **Items feel/balance + the star glow need a `cargo run --release` pass.** Next-up: **M14**.
 - **M11 — Settings screen + race options** ✅ (2026-07-08): session config, applied at race start.
   New `Settings` `GameState` off a two-item Menu (START/SETTINGS, `FrameInput.nav_v` Up/Down);
   a `Settings` `Copy` struct on `Game` (`master_volume`/`active_karts`/`lap_count`/`default_track`/
@@ -195,7 +331,7 @@ it fits comfortably under the 500 µs substep gate (see the table above). **Reco
   live (`AudioBank::set_master` each frame; `[`/`]` edit the setting); FOV is the chase-cam base;
   `default_track` seeds/absorbs the TrackSelect pick. 4 headless tests (**51 total**: propagation,
   reachability+persistence, clamps, parked-kart-out + re-race), substep **≈ +0 µs** (A/B same-state),
-  0 new alloc. **Settings look/feel needs a `cargo run --release` pass.** Next-up: **M12**.
+  0 new alloc. **Settings look/feel needs a `cargo run --release` pass.** Next-up: **M13** (Season 2 items).
 - **M10 — Minimap / radar + rubber-band AI** ✅ (2026-07-08): spatial awareness + catch-up.
   **Minimap** (`main.rs`): a `Minimap` struct samples the live circuit centerline once into
   world-XZ points (rebuilt on `track_dirty`), then `project`s outline + live kart positions into

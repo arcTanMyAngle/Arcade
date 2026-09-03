@@ -64,12 +64,15 @@ pub enum Sfx {
     FireLaser,
     FireDart,
     FireMine,
+    ItemRoll,
+    ItemLaunch,
+    Star,
 }
 
 impl Sfx {
     /// All variants, in stable index order. [`AudioBank`] loads its sound table
     /// in this order, so `ALL[i].index() == i`.
-    pub const ALL: [Sfx; 16] = [
+    pub const ALL: [Sfx; 19] = [
         Sfx::MenuMove,
         Sfx::MenuConfirm,
         Sfx::MenuBack,
@@ -86,6 +89,9 @@ impl Sfx {
         Sfx::FireLaser,
         Sfx::FireDart,
         Sfx::FireMine,
+        Sfx::ItemRoll,
+        Sfx::ItemLaunch,
+        Sfx::Star,
     ];
 
     /// Stable index into [`AudioBank::sfx`].
@@ -113,6 +119,9 @@ impl Sfx {
             Sfx::FireLaser => 0.5,
             Sfx::FireDart => 0.65,
             Sfx::FireMine => 0.7,
+            Sfx::ItemRoll => 0.7,
+            Sfx::ItemLaunch => 0.8,
+            Sfx::Star => 0.95,
         }
     }
 }
@@ -459,6 +468,9 @@ pub mod synth {
             Sfx::FireLaser => 0.18,
             Sfx::FireDart => 0.18,
             Sfx::FireMine => 0.2,
+            Sfx::ItemRoll => 0.4,
+            Sfx::ItemLaunch => 0.25,
+            Sfx::Star => 0.75,
         }
     }
 
@@ -595,6 +607,38 @@ pub mod synth {
                 apply_env(&mut nz, 0.001, 0.04);
                 mix_at(&mut b, &nz, 0, 0.3);
                 finish(b, 0.85)
+            }
+            Sfx::ItemRoll => {
+                // A quick ascending "slot machine" roll.
+                let notes = [523.25, 659.25, 783.99, 987.77];
+                let mut b = vec![0.0f32; n_samples(dur)];
+                for (k, &f) in notes.iter().enumerate() {
+                    let mut blip = swept(f, f, 0.09, &[1.0, 0.3]);
+                    apply_env(&mut blip, 0.002, 0.05);
+                    mix_at(&mut b, &blip, n_samples(0.06 * k as f32), 0.85);
+                }
+                finish(b, 0.85)
+            }
+            Sfx::ItemLaunch => {
+                // A tight turbo whoosh for firing a shell / dropping a banana.
+                let mut b = noise(dur, 0x00D2_1F77);
+                low_pass(&mut b, 1600.0);
+                apply_env(&mut b, 0.004, 0.08);
+                let mut tone = swept(240.0, 760.0, dur, &[1.0, 0.4, 0.2]);
+                apply_env(&mut tone, 0.03, 0.12);
+                mix_at(&mut b, &tone, 0, 0.6);
+                finish(b, 0.85)
+            }
+            Sfx::Star => {
+                // A bright ascending arpeggio — the classic invincibility sparkle.
+                let notes = [659.25, 783.99, 987.77, 1318.51];
+                let mut b = vec![0.0f32; n_samples(dur)];
+                for (k, &f) in notes.iter().enumerate() {
+                    let mut blip = swept(f, f * 1.01, 0.18, &[1.0, 0.6, 0.35, 0.2]);
+                    apply_env(&mut blip, 0.003, 0.12);
+                    mix_at(&mut b, &blip, n_samples(0.09 * k as f32), 0.85);
+                }
+                finish(b, 0.95)
             }
         }
     }

@@ -4,9 +4,11 @@
 built in Rust on `macroquad` 0.4.14. Originally a driving prototype; evolved through a
 4-milestone "Combat Grand Prix" pivot into a full race + combat game.
 
-**Status:** ✅ Playable. Builds clean, **51 tests pass (+1 ignored bench), zero
+**Status:** ✅ Playable. Builds clean, **62 tests pass (+1 ignored bench), zero
 warnings**. Custom GLSL shaders confirmed compiling and running on the target Intel
-Arc iGPU. Karts physically collide (M5); the whole thing is wrapped in a game-flow
+Arc iGPU. **M13 (2026-09-03)** adds MK-style item boxes + a 5-item roulette
+(mushroom / banana / green shell / red shell / star) on top of the class cannons.
+**M14 (2026-09-03)** adds launch ramps + acceleration strips to every circuit. Karts physically collide (M5); the whole thing is wrapped in a game-flow
 state machine — Menu → ClassSelect → TrackSelect → Race → Results, plus a Menu → Settings
 branch (M11) — with in-race pause (M6); it has a **voice: 100% procedural audio** (M7,
 `src/audio.rs`); it has **3 selectable circuits + boost pads** (M8); a **HUD minimap +
@@ -19,7 +21,7 @@ lap count, default track, FOV — persisted for the session and applied at race 
 
 ```sh
 cargo run --release      # play it (release profile is fat-LTO; first build is slow)
-cargo test               # 51 tests + 1 ignored bench, all headless (no window/GPU/audio device)
+cargo test               # 62 tests + 1 ignored bench, all headless (no window/GPU/audio device)
 cargo build              # debug build (deps still optimized; see Cargo.toml profiles)
 cargo test --release -- --ignored --nocapture bench_sim_substep   # perf baseline
 ```
@@ -33,8 +35,9 @@ No external asset files — everything (meshes, shaders, **and audio PCM**) is p
 |---|---|
 | `W`/`Up`, `S`/`Down` | throttle / brake |
 | `A`/`Left`, `D`/`Right` | steer |
-| `Space` / `LeftShift` | drift (hold) → mini-turbo; same key arms a trick while airborne |
+| `Space` / `LeftShift` / **right mouse button** | drift (hold) → mini-turbo; same key arms a trick while airborne |
 | `LeftCtrl` / `F` | fire cannon (held; per-class reload gates cadence) |
+| `E` / `LeftAlt` | use held item — mushroom / banana / shell / star (M13) |
 | `R` | restart race (in Race / Results) |
 | `Esc` | context: quit (Menu) · back (Settings / ClassSelect / TrackSelect) · pause↔resume (Race) |
 | `Enter` | confirm: START/SETTINGS (Menu) · class→track (ClassSelect) · start (TrackSelect) · back (Settings) · to-menu (Results / pause) |
@@ -51,13 +54,13 @@ Single binary crate. `main.rs` is the crate root and carries `#![allow(dead_code
 
 | File | Responsibility | Key public types |
 |---|---|---|
-| [src/main.rs](src/main.rs) | Window, GPU shell: samples keys → `FrameInput` (+ **M11 `nav_v` up/down**), drives `Game`, chase/menu/preview/track cameras (+ **M9 shake offset**, **M11 `settings.fov` base**), render passes (material-bracketed) per `GameState`, boost-pad pass, all HUD + front-end screens (+ **M9 SPUN-OUT pulse / position ▲▼ / FINAL-LAP flash**, **M10 `Minimap` radar**, **M11 two-item menu + `draw_settings`**); rebuilds road meshes + minimap on `track_dirty`; mirrors `settings.master_volume` into the `AudioBank` each frame | `Minimap` |
+| [src/main.rs](src/main.rs) | Window, GPU shell: samples keys → `FrameInput` (+ **M11 `nav_v` up/down**), drives `Game`, chase/menu/preview/track cameras (+ **M9 shake offset**, **M11 `settings.fov` base**), render passes (material-bracketed) per `GameState`, boost-pad + accel-strip passes, all HUD + front-end screens (+ **M9 SPUN-OUT pulse / position ▲▼ / FINAL-LAP flash**, **M10 `Minimap` radar**, **M11 two-item menu + `draw_settings`**); rebuilds road meshes + minimap on `track_dirty`; mirrors `settings.master_volume` into the `AudioBank` each frame | `Minimap` |
 | [src/game.rs](src/game.rs) | **Top-level game flow (M6):** `GameState` machine (incl. `TrackSelect` M8, **`Settings` M11**), owns all sim + CPU-mesh state (incl. the **M10 `gaps` array**), holds the 60 Hz fixed-step loop, class-select → kart-0 commit, track commit, pause, **M9 hit-stop + screen-shake + respawn prev-snap**, **M11 session `Settings` (applied at `start_race`) + `active_karts` sub-slicing**; emits audio events. Headless (no GPU) | `Game`, `GameState`, `Flow`, `FrameInput`, `Settings`, `CLASS_ORDER`, `TRACK_ORDER`, `TRACK_NAMES`, `NUM_KARTS` |
-| [src/physics.rs](src/physics.rs) | 60 Hz arcade kart sim: driving, drift/trick/boost state machines, gravity/ground, **OOB respawn** (M9), **rubber-band factor** (M10, `rubber_band`), rayon-parallel AI + particles | `KartState`, `Input`, `ParticleSystem`, `RenderPose`, `SparkStage`, `rubber_band` |
-| [src/track_3d.rs](src/track_3d.rs) | Closed cubic-Bézier circuits (3 layouts, M8; **`LAP_SCALE` longer laps**, M9), arc-length LUT, banked frames, O(1) ground queries, procedural road mesh, **boost pads** (`boost_at` reuses `track_u`) | `TrackSpline`, `Frame`, `GroundInfo`, `BoostPad` |
-| [src/mesh_gen.rs](src/mesh_gen.rs) | All procedural meshes (kart + class cannon, wheel, ammo crate, projectiles, **boost pad**), pixel font, HUD icons. `MeshBuilder` stores **normals + unlit albedo** for the GPU to light | `MeshBuilder`, `build_*`, `KART_PALETTE`, spark colors |
+| [src/physics.rs](src/physics.rs) | 60 Hz arcade kart sim: driving, drift/trick/boost state machines, gravity/ground, **OOB respawn** (M9), **rubber-band factor** (M10, `rubber_band`), **ramp launch + accel-strip boost** (M14, both ride the ground query), rayon-parallel AI + particles | `KartState`, `Input`, `ParticleSystem`, `RenderPose`, `SparkStage`, `rubber_band` |
+| [src/track_3d.rs](src/track_3d.rs) | Closed cubic-Bézier circuits (3 layouts, M8; **`LAP_SCALE` longer laps**, M9), arc-length LUT, banked frames, O(1) ground queries, procedural road mesh, **boost pads** (`boost_at` reuses `track_u`), **launch ramps + accel strips** (M14: `surface_offset` raises the road surface in mesh + physics; `accel_at` reuses the ground query) | `TrackSpline`, `Frame`, `GroundInfo`, `BoostPad`, `Ramp`, `AccelStrip` |
+| [src/mesh_gen.rs](src/mesh_gen.rs) | All procedural meshes (kart + class cannon, wheel, ammo crate, projectiles, **boost pad**, **accel strip**), pixel font, HUD icons. `MeshBuilder` stores **normals + unlit albedo** for the GPU to light | `MeshBuilder`, `build_*`, `KART_PALETTE`, spark colors |
 | [src/race.rs](src/race.rs) | Race Director: countdown, anti-cheat checkpoint laps, live standings, finish board, **per-kart gap-to-leader** (`gaps_into`, M10), **settable lap target (`laps` field) + field-sized `progress`** (M11) | `RaceDirector`, `Phase`, `RaceProgress`, `TOTAL_LAPS` |
-| [src/combat.rs](src/combat.rs) | Cannons/classes, ammo, projectile pool, **lock-free spatial hash**, hit/spinout, combat AI (lead/dodge/standing, **rubber-band `effective_aggression`** M10), **kart-vs-kart collision** (per-class `mass`), **slipstream/draft factor** (M5.1, `compute_draft` → `Combat.draft`), **screen-shake trauma** (M9, `Combat.trauma`); pushes combat `Sfx` into the event sink | `Combat`, `ChassisClass`, `Projectile`, `ProjKind`, `SpatialGrid`, `KartCombat`, `AmmoCrate` |
+| [src/combat.rs](src/combat.rs) | Cannons/classes, ammo, projectile pool, **lock-free spatial hash**, hit/spinout, combat AI (lead/dodge/standing, **rubber-band `effective_aggression`** M10), **kart-vs-kart collision** (per-class `mass`), **slipstream/draft factor** (M5.1, `compute_draft` → `Combat.draft`), **screen-shake trauma** (M9, `Combat.trauma`), **MK-style item boxes + items** (M13: `ItemKind`/`ItemBox`/`roll_item`, `KartCombat.held`/`star_time`, shells/banana ride the projectile pool); pushes combat `Sfx` into the event sink | `Combat`, `ChassisClass`, `Projectile`, `ProjKind`, `SpatialGrid`, `KartCombat`, `AmmoCrate`, `ItemBox`, `ItemKind` |
 | [src/audio.rs](src/audio.rs) | **Procedural audio (M7):** pure `synth` submodule (DSP + WAV encoder + per-sound recipes + engine/drift loop generators) is headless-testable; device-side `AudioBank` decodes the in-memory WAVs and drives playback (one-shots, speed-crossfaded engine bands, gated drift loop). `Sfx`/`SfxQueue` are the zero-alloc event wire | `AudioBank`, `Sfx`, `SfxQueue`, `synth::*` |
 | [src/shaders.rs](src/shaders.rs) | Three custom GLSL ES materials (toon / road-noise / crate-pulse) with graceful fallback | `Shaders`, `LIGHT_DIR` |
 
@@ -139,6 +142,7 @@ These were explicit design directives and are upheld throughout — preserve the
 - **Engine "pitch" is faked by crossfading** (M7): `PlaySoundParams` exposes only `{ looped, volume }` — **there is no pitch/playback-rate control** in macroquad 0.4.14. So the engine is `N_ENGINE_BANDS = 8` pre-baked looped tones over 60→320 Hz; `AudioBank::update_engine` equal-power-crossfades the two bracketing bands by `speed_ratio()` each frame. Loops are clickless because each band holds an **integer number of fundamental cycles** (frequency back-solved to fit the buffer length); the noisy drift loop instead uses an **overlap-add** tail fold. Noise is a **seeded** xorshift so the synth is deterministic (testable).
 - **Audio events never cross a `par_iter`** (invariant #3): every `events.push(..)` happens in a single-threaded phase — flow logic in `Game::update`, the post-`step_all` diffs in `run_substeps`, and combat's single-threaded `handle_firing`/`apply_hits`/`handle_pickups`/`resolve_kart_collisions`. Bumps are sounded only when **kart 0 is in the pair** and pickups only for **kart 0** (no positional audio yet, so AI-on-AI events would just be noise). The 4 per-class fire timbres are all reachable because the player can pick any class.
 - **Boost pads reuse the ground query — no new broadphase** (M8): a `BoostPad` is just `{u_center, u_half, half_width, frame}`; `track.boost_at(track_u, lateral)` is an O(pads) interval test in spline-parameter space against values the per-kart ground query already produced, so the check rides `step_all` with zero added spatial work and zero alloc. Pads grant a boost via the **existing `boost_time`**, so the camera FOV juice *and* the M7 boost SFX (the `run_substeps` boost-edge diff) fire automatically — no new plumbing. Detection and the visual footprint are centered strips (`PAD_HALF_WIDTH < ROAD_HALF_WIDTH`), so hugging the curb misses.
+- **Ramps raise the surface, not the kart** (M14): a `Ramp` is a `{u_start, u_end, height, frame}` footprint; `TrackSpline::surface_offset(u)` returns the extra road height (cosine ease to the lip, C1 at both ends, 0 elsewhere). The **same** offset feeds both `push_ring` (road mesh, which also tints the raised rings a warm dirt color) and `ground_from_u` (physics), so the ramp is pure geometry — a kart climbs the raised surface and, past the lip where the offset drops back to 0, carries its momentum airborne with no special-case launch impulse. Tricks cash the existing `TRICK_BOOST_DUR` landing boost. **Accel strips** are `BoostPad`-shaped `{u_center, u_half, half_width, frame}` footprints; `accel_at` is the same O(strips) u-space interval test as `boost_at`, and the physics layer grants a longer `ACCEL_STRIP_DUR = 1.4 s` (vs `PAD_BOOST_DUR = 0.9 s`) through the same `boost_time` — zero new broadphase, zero new alloc, and the existing boost-edge SFX fires automatically. Strips render as a distinct 4-chevron orange-red mesh (world + track preview).
 - **Alternate tracks must be star-convex / non-self-intersecting in XZ** (M8): the lock-free collision hash is 2D (XZ), which assumes the loop never overlaps itself vertically. New circuits (`speedway`, `serpentine`) keep anchors at monotonically increasing angle around the origin (radius may vary) so the Catmull-Rom loop stays simple. A figure-eight would break the hash — don't add one without making the grid 3D first.
 - **Track switching rebuilds, via `track_dirty`** (M8): `Game` owns the sim-side `TrackSpline` (+ its pads) and rebuilds `Combat`/race/grid on a track commit (a transition — allocation is fine there); the **GPU** road meshes live in `main`, which watches `game.track_dirty` and regenerates them once per change. `restart_race` (R) keeps the same track, so it never sets the flag. The **M10 `Minimap`** outline rides the same `track_dirty` signal — rebuilt once per track change in `main`, never per frame.
 - **Rubber-band lifts ceilings, never teleports positions** (M10): the catch-up is an *honest* boost — `physics::rubber_band(gap)` scales only a trailing **AI**'s effective driving skill (`compute_ai_inputs`, folded in as an additive lift so it can't push skill past 1) and its drift-farm `effective_aggression` (`combat::plan_ai`). It never touches the player (slot 0 is overwritten with real input right after the AI pass) and never edits standings — a back-marker just corners a touch sharper and farms more mini-turbos, so every position is still earned (the "honest, no rigging" house rule). Gap is measured in **rank-key units** (1.0 = one lap), so it's track-length-independent and free of any arc-length lookup. `gaps_into` is filled every substep (like `places`) into a `Game.gaps` parallel array — `KartState` stays lean (invariant #4). The factor is read twice/AI kart (once for skill, once for aggression); recomputing the divide rather than caching a factor array keeps it a pure, single-source function.
@@ -147,10 +151,10 @@ These were explicit design directives and are upheld throughout — preserve the
 
 ---
 
-## Test inventory (51)
+## Test inventory (62)
 
-- `track_3d`: spline wrap, length, frame orthonormality, ground query, even arc-length sampling; **M8**: all 3 circuits are valid orthonormal closed loops with ≥4 pads, boost-pad footprint is localized (on-pad vs off-strip vs between-pads).
-- `physics`: throttle accel, drift→blue→boost, airborne gravity, trick-on-landing boost, fixed-size particle pool; **M8**: a boost pad grants a boost when driven over (centered) but not when missed (off-strip); **M9**: a kart flung 50 m off the road recovers onto the circuit within 1 s, upright, speed scrubbed; **M10**: `rubber_band` is strictly monotonic in gap and stays in `[1, 1+RUBBER_BAND_MAX]` (leader gets 1.0, far gap approaches but never exceeds the cap).
+- `track_3d`: spline wrap, length, frame orthonormality, ground query, even arc-length sampling; **M8**: all 3 circuits are valid orthonormal closed loops with ≥4 pads, boost-pad footprint is localized (on-pad vs off-strip vs between-pads); **M14**: every circuit carries ramps + accel strips, the ramp surface offset is localized (flat before the rise / full at the lip / flat past it), and the accel-strip footprint is localized (on-strip vs off-strip vs between-strips).
+- `physics`: throttle accel, drift→blue→boost, airborne gravity, trick-on-landing boost, fixed-size particle pool; **M8**: a boost pad grants a boost when driven over (centered) but not when missed (off-strip); **M9**: a kart flung 50 m off the road recovers onto the circuit within 1 s, upright, speed scrubbed; **M10**: `rubber_band` is strictly monotonic in gap and stays in `[1, 1+RUBBER_BAND_MAX]` (leader gets 1.0, far gap approaches but never exceeds the cap); **M14**: driving a ramp launches a kart airborne and a trick cashes a landing boost, and an accel strip grants a boost that outlasts a pad's.
 - `mesh_gen`: box geometry counts, kart mesh index range, glyph, HSV primaries.
 - `race`: sequential lap counting, sector-skip rejected, reverse-cross rejected, standings order, countdown→release.
 - `combat`: spatial-grid neighborhood, class specs distinct, intercept-leading, aggression curve, **end-to-end fire→hash→spinout**; **M5**: mass ordering, overlapping karts separate without jitter, heavier class displaces lighter more, no tunneling at top speed; **M5.1**: draft ramps to full in <0.5 s when tucked in & decays in <0.5 s when broken (leader never drafts), no draft outside the cone/range (beside / too far / too close / ahead), a full draft gains ≥3 m over 5 s on the line; **M10**: `effective_aggression` lifts a trailing kart above the same kart in the lead, is monotonic in gap for a fixed place, and never boosts the leader above bare `aggression`.
@@ -186,12 +190,26 @@ substep past ~500 µs (3% of frame) or introduces any per-tick allocation needs
 justification. Re-run the bench before/after large sim changes and record the delta.
 **`plan.md` carries a per-milestone substep-delta budget table** (M7 audio ✅ ≈+0,
 M8 tracks/pads ✅ ≈+0, M5.1 draft ✅ ≈+1.5 µs, **M9 juice + longer laps ✅ ≈+5 µs**,
-**M10 minimap/rubber-band ✅ ≈+0**, and **M11 settings ✅ ≈+0** all confirmed; next:
-M12 ghost <+10 µs) — worst-case total ~190 µs, still well under the 500 µs gate.
+   **M10 minimap/rubber-band ✅ ≈ +0**, and **M11 settings ✅ ≈ +0** all confirmed; **M14 ramps + accel strips ✅ ≈ +0** (353.82 µs @ 8 karts on the 2026-09-03 machine state — ramps/strips ride the ground query, 0 new alloc); next:
+M15 graphics ≈ +0 µs) — worst-case total ~190 µs, still well under the 500 µs gate.
 
 ---
 
 ## Known tech debt / watch-list
+
+- **M14 ramps + accel-strip feel unverified.** Headless-tested (ramp launch → airborne + trick
+  landing boost, accel strip outlasts a pad, localized footprints) but the *feel* — lip
+  catchability/launch height, accel-strip strength/visibility, how ramps read in the overhead
+  track preview, and the warm-dirt ramp tint — needs a `cargo run --release` pass. Tune
+  `RAMP_HEIGHT`/`RAMP_LEN`/`N_RAMPS` and `ACCEL_HALF_LEN`/`ACCEL_STRIP_DUR`/`N_ACCEL_STRIPS`
+  (`track_3d.rs`, `physics.rs`).
+
+- **M13 items feel/balance unverified.** Headless-tested (roulette determinism + coverage,
+  box pickup + cooldown, mushroom boost, banana one-hit spinout, star invincibility/expiry) but
+  the *feel* — box placement/catchability, roulette weighting, shell/banana/star handling, AI
+  item use, and the HUD item slot + star glow — needs a `cargo run --release` pass. Tune
+  `ITEM_BOX_COUNT`/`ITEM_BOX_RADIUS`/`ITEM_BOX_RESPAWN`, the `roll_item` weights,
+  `STAR_DURATION`/`MUSHROOM_BOOST_DUR`, and the shell speeds/bounces in `combat.rs`.
 
 - **M11 settings look/feel unverified.** Headless-tested (propagation, reachability, clamps,
   parked-kart correctness) but the *screen* — the two-item menu, the Settings panel rows,

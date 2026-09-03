@@ -418,6 +418,38 @@ pub fn build_boost_pad_mesh() -> Mesh {
     b.into_mesh(None)
 }
 
+/// An acceleration strip (M14): a longer, hotter boost strip — orange-red plate
+/// with four chevrons, built flat in the road frame (like the boost pad) so
+/// `main` can drop it onto the banked surface. Drawn with the crate-pulse
+/// material.
+pub fn build_accel_strip_mesh() -> Mesh {
+    let half_w = crate::track_3d::ACCEL_HALF_WIDTH;
+    let half_len = crate::track_3d::ACCEL_HALF_LEN;
+    let mut b = MeshBuilder::new();
+    let plate = Color::new(0.42, 0.11, 0.09, 1.0);
+    let glow = Color::new(1.00, 0.42, 0.08, 1.0);
+
+    // Base plate, just above the road.
+    b.add_box(Mat4::from_translation(vec3(0.0, 0.03, 0.0)), vec3(half_w, 0.03, half_len), plate);
+
+    // Four chevrons (">>>>") pointing forward (+Z): two angled arms each.
+    let arm = vec3(0.32, 0.06, half_len * 0.34);
+    for k in 0..4 {
+        let zc = -half_len * 0.5 + (k as f32 + 0.5) * (half_len / 4.0);
+        b.add_box(
+            Mat4::from_translation(vec3(-half_w * 0.42, 0.10, zc)) * Mat4::from_rotation_y(-0.7),
+            arm,
+            glow,
+        );
+        b.add_box(
+            Mat4::from_translation(vec3(half_w * 0.42, 0.10, zc)) * Mat4::from_rotation_y(0.7),
+            arm,
+            glow,
+        );
+    }
+    b.into_mesh(None)
+}
+
 /// Four projectile meshes in [`crate::combat::ProjKind`] index order
 /// (Mortar, Laser, Dart, Mine). Built once, instanced per live projectile.
 pub fn build_projectile_meshes() -> Vec<Mesh> {
@@ -467,7 +499,42 @@ pub fn build_projectile_meshes() -> Vec<Mesh> {
         }
         b.into_mesh(None)
     };
-    vec![mortar, laser, dart, mine]
+    let banana = {
+        let mut b = MeshBuilder::new();
+        let yellow = Color::new(0.95, 0.82, 0.15, 1.0);
+        let tip = Color::new(0.55, 0.38, 0.08, 1.0);
+        // A curved-ish banana: an elongated yellow body with darker tips.
+        b.add_sphere(Mat4::from_scale(vec3(0.55, 0.55, 1.4)), 0.30, 6, 10, yellow);
+        b.add_sphere(Mat4::from_translation(vec3(0.0, 0.0, 0.42)), 0.16, 6, 8, tip);
+        b.add_sphere(Mat4::from_translation(vec3(0.0, 0.0, -0.42)), 0.16, 6, 8, tip);
+        b.into_mesh(None)
+    };
+    let green_shell = {
+        let mut b = MeshBuilder::new();
+        let body = Color::new(0.25, 0.85, 0.30, 1.0);
+        let rim = Color::new(0.90, 0.98, 0.90, 1.0);
+        b.add_sphere(Mat4::IDENTITY, 0.34, 8, 10, body);
+        // A few nub spikes, so it reads as a shell rather than a ball.
+        for k in 0..4 {
+            let a = k as f32 / 4.0 * TAU;
+            let dir = vec3(a.cos(), 0.0, a.sin());
+            b.add_sphere(Mat4::from_translation(dir * 0.34), 0.10, 5, 7, rim);
+        }
+        b.into_mesh(None)
+    };
+    let red_shell = {
+        let mut b = MeshBuilder::new();
+        let body = Color::new(0.90, 0.20, 0.16, 1.0);
+        let rim = Color::new(0.98, 0.95, 0.90, 1.0);
+        b.add_sphere(Mat4::IDENTITY, 0.34, 8, 10, body);
+        for k in 0..4 {
+            let a = k as f32 / 4.0 * TAU;
+            let dir = vec3(a.cos(), 0.0, a.sin());
+            b.add_sphere(Mat4::from_translation(dir * 0.34), 0.10, 5, 7, rim);
+        }
+        b.into_mesh(None)
+    };
+    vec![mortar, laser, dart, mine, banana, green_shell, red_shell]
 }
 
 /// Add the 12 edge bars of a cube of half-extent `half`, each a thin box of

@@ -28,13 +28,14 @@ use macroquad::prelude::*;
 use macroquad::rand::gen_range;
 
 use audio::AudioBank;
-use combat::Combat;
+use combat::{Combat, ItemKind};
 use game::{
     Flow, FrameInput, Game, GameState, CLASS_ORDER, FOV_MAX, FOV_MIN, NUM_KARTS, SETTINGS_ROWS,
     TRACK_NAMES, TRACK_ORDER,
 };
 use mesh_gen::{
-    draw_boost_spark, draw_pixel_text, pixel_text_width, BLUE_SPARK, ORANGE_SPARK,
+    build_item_box_mesh, draw_boost_spark, draw_pixel_text, gen_item_box_texture,
+    pixel_text_width, BLUE_SPARK, ORANGE_SPARK,
 };
 use physics::{interpolate, Input, KartState, RenderPose, SparkStage};
 use race::{Phase, RaceDirector};
@@ -133,6 +134,9 @@ async fn main() {
     let track_splines: Vec<TrackSpline> = TRACK_ORDER.iter().map(|ctor| ctor()).collect();
     let track_previews: Vec<Vec<Mesh>> = track_splines.iter().map(build_track_meshes).collect();
     let shaders = Shaders::load();
+    // The "?" item box (M13) is textured, so it's built here where the GPU texture
+    // context exists — not in the headless `Game`.
+    let item_box_mesh = build_item_box_mesh(gen_item_box_texture(64));
     // Procedural audio (M7): all PCM synthesized + decoded once, here. Needs the
     // window's audio context, so it lives in `main`, never in the headless `Game`.
     let mut audio = AudioBank::load().await;
@@ -198,7 +202,7 @@ async fn main() {
                 let cam = menu_camera(&game.track, t);
                 set_camera(&cam);
                 shaders.set_camera(cam.position);
-                draw_world(&game, &track_meshes, &shaders, t);
+                draw_world(&game, &track_meshes, &item_box_mesh, &shaders, t);
 
                 set_default_camera();
                 draw_menu(&game, t);
@@ -208,7 +212,7 @@ async fn main() {
                 let cam = menu_camera(&game.track, t);
                 set_camera(&cam);
                 shaders.set_camera(cam.position);
-                draw_world(&game, &track_meshes, &shaders, t);
+                draw_world(&game, &track_meshes, &item_box_mesh, &shaders, t);
 
                 set_default_camera();
                 draw_settings(&game);
@@ -221,7 +225,14 @@ async fn main() {
             }
             GameState::TrackSelect => {
                 let cursor = game.track_cursor;
-                draw_track_preview(&track_splines[cursor], &track_previews[cursor], &game.pad_mesh, &shaders, t);
+                draw_track_preview(
+                    &track_splines[cursor],
+                    &track_previews[cursor],
+                    &game.pad_mesh,
+                    &game.accel_strip_mesh,
+                    &shaders,
+                    t,
+                );
 
                 set_default_camera();
                 draw_track_select(cursor, &track_splines[cursor]);
@@ -265,7 +276,7 @@ async fn main() {
                 };
                 set_camera(&cam);
                 shaders.set_camera(cam_eye);
-                draw_world(&game, &track_meshes, &shaders, t);
+                draw_world(&game, &track_meshes, &item_box_mesh, &shaders, t);
 
                 // 2D HUD.
                 set_default_camera();
@@ -339,11 +350,19 @@ fn sample_player_input() -> Input {
         steer += 1.0;
     }
 
-    let drift_held = is_key_down(KeyCode::Space) || is_key_down(KeyCode::LeftShift);
-    let drift_pressed = is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::LeftShift);
+    // Drift (and, while airborne, a trick) is armed by Space / LeftShift or the
+    // right mouse button — a natural hold-to-slide for mouse steering setups.
+    let drift_held = is_key_down(KeyCode::Space)
+        || is_key_down(KeyCode::LeftShift)
+        || is_mouse_button_down(MouseButton::Right);
+    let drift_pressed = is_key_pressed(KeyCode::Space)
+        || is_key_pressed(KeyCode::LeftShift)
+        || is_mouse_button_pressed(MouseButton::Right);
 
     // Cannon fires while held; the per-class reload gates the actual cadence.
     let fire = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::F);
+    // Item use is edge-triggered (M13): E / LeftAlt fires the held item.
+    let use_item = is_key_pressed(KeyCode::E) || is_key_pressed(KeyCode::LeftAlt);
 
     Input {
         throttle,
@@ -352,7 +371,7 @@ fn sample_player_input() -> Input {
         drift_held,
         drift_pressed,
         trick_pressed: drift_pressed, // same key arms a trick while airborne
-        use_item: fire,
+        use_item,
         fire,
     }
 }
@@ -361,9 +380,9 @@ fn sample_player_input() -> Input {
 // World render (shared by Menu / Race / Results)
 // ----------------------------------------------------------------------------
 
-/// Draw the full 3D scene (ground, road, crates, projectiles, karts, particles).
-/// The caller sets the camera + feeds it to the shaders first.
-fn draw_world(game: &Game, track_meshes: &[Mesh], shaders: &Shaders, t: f32) {
+/// Draw the full 3D scene (ground, road, crates, item boxes, projectiles, karts,
+/// particles). The caller sets the camera + feeds it to the shaders first.
+fn draw_world(game: &Game, track_meshes: &[Mesh], item_box_mesh: &Mesh, shaders: &Shaders, t: f32) {
     draw_plane(vec3(0.0, -1.5, 0.0), vec2(500.0, 500.0), None, GRASS);
 
     // Road — procedural value-noise asphalt.
@@ -377,6 +396,10 @@ fn draw_world(game: &Game, track_meshes: &[Mesh], shaders: &Shaders, t: f32) {
     shaders.use_crate();
     for pad in game.track.boost_pads() {
         draw_mesh_transformed(&game.pad_mesh, pad_model_matrix(&pad.frame));
+    }
+    // Accel strips (M14) — longer/hotter orange-red siblings of the pads.
+    for strip in game.track.accel_strips() {
+        draw_mesh_transformed(&game.accel_strip_mesh, pad_model_matrix(&strip.frame));
     }
     gl_use_default_material();
 
@@ -393,6 +416,20 @@ fn draw_world(game: &Game, track_meshes: &[Mesh], shaders: &Shaders, t: f32) {
         draw_mesh_transformed(&game.crate_mesh, m);
     }
     gl_use_default_material();
+
+    // Floating "?" item boxes (M13): the classic rainbow cube, spinning in place.
+    // Textured, so drawn with the default material.
+    for (n, b) in game.combat.item_boxes.iter().enumerate() {
+        if !b.available() {
+            continue;
+        }
+        let bob = (t * 2.0 + n as f32 * 1.3).sin() * 0.15;
+        let m = Mat4::from_translation(b.pos + Vec3::Y * bob)
+            * Mat4::from_rotation_y(t * 1.3 + n as f32)
+            * Mat4::from_rotation_x(t * 0.9)
+            * Mat4::from_scale(Vec3::splat(1.0));
+        draw_mesh_transformed(item_box_mesh, m);
+    }
 
     // Karts, wheels and projectiles — cel/toon shaded.
     shaders.use_toon();
@@ -420,6 +457,16 @@ fn draw_world(game: &Game, track_meshes: &[Mesh], shaders: &Shaders, t: f32) {
             c.a *= p.life_ratio();
             let s = p.size * (0.5 + 0.5 * p.life_ratio());
             draw_cube(p.pos, vec3(s, s, s), None, c);
+        }
+    }
+
+    // Star glow (M13): a translucent pulsing aura around star-powered karts.
+    for i in 0..game.active_karts {
+        if game.combat.karts[i].star_time > 0.0 {
+            let k = &game.karts[i];
+            let pulse = 1.0 + 0.12 * (t * 10.0).sin();
+            let c = Color::new(1.0, 0.95, 0.40, 0.26);
+            draw_cube(k.position + k.up * 0.5, Vec3::splat(2.6 * pulse), None, c);
         }
     }
 }
@@ -741,8 +788,16 @@ fn draw_class_select(game: &Game) {
 }
 
 /// The 3D half of track-select: a slow overhead orbit of the highlighted circuit
-/// (road + its boost pads), so the player can read the layout at a glance.
-fn draw_track_preview(spline: &TrackSpline, meshes: &[Mesh], pad_mesh: &Mesh, shaders: &Shaders, t: f32) {
+/// (road + its boost pads + accel strips), so the player can read the layout at a
+/// glance. The ramps (M14) are part of the road mesh itself, so they show too.
+fn draw_track_preview(
+    spline: &TrackSpline,
+    meshes: &[Mesh],
+    pad_mesh: &Mesh,
+    accel_mesh: &Mesh,
+    shaders: &Shaders,
+    t: f32,
+) {
     let a = t * 0.22;
     let r = 165.0;
     let eye = vec3(a.cos() * r, 135.0, a.sin() * r);
@@ -761,6 +816,9 @@ fn draw_track_preview(spline: &TrackSpline, meshes: &[Mesh], pad_mesh: &Mesh, sh
     shaders.use_crate();
     for pad in spline.boost_pads() {
         draw_mesh_transformed(pad_mesh, pad_model_matrix(&pad.frame));
+    }
+    for strip in spline.accel_strips() {
+        draw_mesh_transformed(accel_mesh, pad_model_matrix(&strip.frame));
     }
     gl_use_default_material();
 }
@@ -854,9 +912,10 @@ fn draw_hud(player: &KartState, elapsed: f32) {
     if elapsed < 7.0 {
         let a = (1.0 - elapsed / 7.0).clamp(0.0, 1.0);
         let c = Color::new(1.0, 1.0, 1.0, a);
-        draw_pixel_text("WASD / ARROWS  DRIVE", 24.0, screen_height() - 110.0, 3.0, c);
-        draw_pixel_text("SPACE  DRIFT / TRICK", 24.0, screen_height() - 80.0, 3.0, c);
-        draw_pixel_text("CTRL / F  FIRE CANNON", 24.0, screen_height() - 50.0, 3.0, c);
+        draw_pixel_text("WASD / ARROWS  DRIVE", 24.0, screen_height() - 140.0, 3.0, c);
+        draw_pixel_text("SPACE / R-CLICK  DRIFT / TRICK", 24.0, screen_height() - 110.0, 3.0, c);
+        draw_pixel_text("CTRL / F  FIRE CANNON", 24.0, screen_height() - 80.0, 3.0, c);
+        draw_pixel_text("E / ALT  USE ITEM", 24.0, screen_height() - 50.0, 3.0, c);
     }
 }
 
@@ -870,6 +929,15 @@ fn draw_combat_hud(combat: &Combat, t: f32) {
     let panel_w = 220.0;
     let x = screen_width() - panel_w - 24.0;
     let y = screen_height() - 96.0;
+
+    // Item slot (M13): the held item, floating above the class/ammo panel.
+    if kc.held != ItemKind::None {
+        let iy = y - 42.0;
+        draw_rectangle(x, iy, panel_w, 34.0, Color::new(0.0, 0.0, 0.0, 0.40));
+        draw_pixel_text("ITEM", x + 12.0, iy + 8.0, 2.5, Color::new(0.80, 0.80, 0.85, 1.0));
+        draw_pixel_text(kc.held.name(), x + 56.0, iy + 6.0, 3.0, kc.held.color());
+    }
+
     draw_rectangle(x, y, panel_w, 72.0, Color::new(0.0, 0.0, 0.0, 0.40));
 
     draw_pixel_text(class.name(), x + 12.0, y + 12.0, 3.0, color);
@@ -881,6 +949,14 @@ fn draw_combat_hud(combat: &Combat, t: f32) {
         let lit = (i as u8) < kc.ammo;
         let c = if lit { color } else { Color::new(0.3, 0.3, 0.33, 0.6) };
         draw_rectangle(x + 12.0 + i as f32 * pip_w, y + 44.0, pip_w - 3.0, 14.0, c);
+    }
+
+    if kc.star_time > 0.0 {
+        // A pulsing banner while invincible (M13).
+        let label = "STAR!";
+        let s = 6.0 + 0.8 * (t * 14.0).sin();
+        let w = pixel_text_width(label, s);
+        draw_pixel_text(label, (screen_width() - w) * 0.5, 170.0, s, ItemKind::Star.color());
     }
 
     if kc.stunned() {
